@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-heading"><div><p class="eyebrow">新建解析二维码</p><h1>填写资料信息</h1><p class="muted">上传答案、解析或讲解文件，创建后即可下载二维码。</p></div></header>
+<form method="post" enctype="multipart/form-data" class="form-layout" data-submit-lock>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="form-section"><h2>资料信息</h2><div class="form-grid">
+    <label class="span-2">资料名称<span class="required">必填</span><input name="title" maxlength="100" value="{{ form.title or '' }}" required placeholder="例如：高一数学第一章解析"></label>
+    <label>年级<select name="grade">{% for value in grades %}<option {% if form.grade == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+    <label>学科<select name="subject">{% for value in subjects %}<option {% if form.subject == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+    <label>教材版本或册次<input name="textbook_version" maxlength="100" value="{{ form.textbook_version or '' }}" placeholder="例如：人教A版必修一"></label>
+    <label>章节<input name="chapter" maxlength="200" value="{{ form.chapter or '' }}" placeholder="例如：第一章 集合"></label>
+    <label class="span-2">备注<textarea name="note" maxlength="500" rows="3">{{ form.note or '' }}</textarea></label>
+  </div></section>
+  <section class="form-section"><h2>解析文件</h2><label class="file-drop">请选择答案、解析或讲解文件<input type="file" name="file" required><span>优先使用 PDF，也支持图片和普通附件。</span></label></section>
+  <div class="form-actions"><a href="/admin">取消</a><button class="primary" type="submit" data-loading-text="正在创建……">创建二维码</button></div>
+</form>
+{% endblock %}

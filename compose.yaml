@@ -55,8 +55,17 @@ services:
       DEFAULT_QR_MARGIN_MM: ${DEFAULT_QR_MARGIN_MM}
       PDF_WORKER_DATABASE_PATH: ${PDF_WORKER_DATABASE_PATH}
       PDF_WORKER_STORAGE_ROOT: ${PDF_WORKER_STORAGE_ROOT}
+      SITE_NAME: ${SITE_NAME}
+      PUBLIC_QR_BASE_URL: ${PUBLIC_QR_BASE_URL}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}
+      ADMIN_API_TOKEN_HASH: ${ADMIN_API_TOKEN_HASH:-}
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE}
+      SESSION_MAX_AGE_SECONDS: ${SESSION_MAX_AGE_SECONDS}
+      ENABLE_ADMIN_API_DOCS: ${ENABLE_ADMIN_API_DOCS}
     ports:
-      - "127.0.0.1:${PDF_WORKER_PORT}:8000"
+      - "${PDF_WORKER_BIND_ADDRESS:-127.0.0.1}:${PDF_WORKER_PORT}:8000"
     volumes:
       - ./data/pdf-worker/input:/data/input:ro
       - ./data/pdf-worker/output:/data/output
@@ -94,6 +103,8 @@ services:
     pull_policy: never
     environment:
       TZ: ${TZ}
+      ADMIN_PASSWORD_HASH: scrypt$$16384$$8$$1$$AYldkMJ652oqEuLAL2sQ0Q$$qx9DrnBxLwQA0As8F0aKqEBhjPjsvq8JeOyRNqgXw4s
+      SESSION_SECRET: stage03-test-session-secret-at-least-32-characters
     networks:
       - qr-prototype-network
     cpus: "1.0"

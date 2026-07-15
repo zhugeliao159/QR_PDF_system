@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}管理员登录 - {{ site_name }}{% endblock %}
+{% block content %}
+<section class="login-panel">
+  <p class="eyebrow">机构内部管理</p>
+  <h1>{{ site_name }}</h1>
+  <p class="muted">请使用管理员账号登录。</p>
+  <form method="post" action="/admin/login" class="stack-form" data-submit-lock>
+    <label>管理员账号<input name="username" autocomplete="username" required autofocus></label>
+    <label>密码<input type="password" name="password" autocomplete="current-password" required></label>
+    <button class="primary wide" type="submit" data-loading-text="正在登录……">登录</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from io import BytesIO
+from dataclasses import replace
+import re
 
 import fitz
 import pytest
@@ -9,6 +11,7 @@ from PIL import Image
 
 from app.config import Settings
 from app.main import create_app
+from app.auth.password import hash_password
 
 
 @pytest.fixture
@@ -30,6 +33,39 @@ def settings(tmp_path):
 @pytest.fixture
 def client(settings):
     with TestClient(create_app(settings)) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def admin_settings(settings):
+    return replace(
+        settings,
+        admin_username="admin",
+        admin_password_hash=hash_password("Stage03TestPassword!"),
+        session_secret="stage03-test-session-secret-at-least-32-characters",
+    )
+
+
+def login_admin(client):
+    response = client.post(
+        "/admin/login",
+        data={"username": "admin", "password": "Stage03TestPassword!"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303, response.text
+    return response
+
+
+def csrf_from(response):
+    match = re.search(r'name="csrf_token" value="([^"]+)"', response.text)
+    assert match, response.text
+    return match.group(1)
+
+
+@pytest.fixture
+def admin_client(admin_settings):
+    with TestClient(create_app(admin_settings)) as test_client:
+        login_admin(test_client)
         yield test_client
 
 

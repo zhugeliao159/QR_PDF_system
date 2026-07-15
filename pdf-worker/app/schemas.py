@@ -25,6 +25,7 @@ class FileVersionOut(BaseModel):
     created_at: str
     is_current: bool
     note: str | None = None
+    is_pinned: bool = False
 
 
 class BindingOut(BaseModel):
@@ -40,6 +41,12 @@ class BindingOut(BaseModel):
     created_at: str
     updated_at: str
     note: str | None = None
+    title: str
+    display_code: str
+    grade: str
+    subject: str
+    textbook_version: str | None = None
+    chapter: str | None = None
 
 
 class PdfJobOut(BaseModel):
@@ -58,3 +65,5 @@ class PdfJobOut(BaseModel):
     error_message: str | None = None
     created_at: str
     completed_at: str | None = None
+    qr_mode: Literal["dynamic", "fixed"] = "dynamic"
+    qr_version_id: int | None = None

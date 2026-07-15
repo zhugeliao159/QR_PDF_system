@@ -13,8 +13,15 @@ async def create_binding(
     request: Request,
     file: UploadFile = File(...),
     note: str | None = Form(None),
+    title: str | None = Form(None),
+    grade: str = Form("未分类"),
+    subject: str = Form("未分类"),
+    textbook_version: str | None = Form(None),
+    chapter: str | None = Form(None),
 ) -> dict:
-    return await request.app.state.binding_service.create_binding(file, note)
+    return await request.app.state.binding_service.create_binding(
+        file, note, title, grade, subject, textbook_version, chapter
+    )
 
 
 @router.get("/{qr_id}", response_model=BindingOut)
@@ -50,3 +57,17 @@ def list_binding_versions(request: Request, qr_id: str) -> list[dict]:
 @router.post("/{qr_id}/rollback/{version_id}", response_model=BindingOut)
 def rollback_binding(request: Request, qr_id: str, version_id: int) -> dict:
     return request.app.state.binding_service.rollback(qr_id, version_id)
+
+
+@router.get("/{qr_id}/versions/{version_id}/qr.png")
+def get_fixed_qr_png(
+    request: Request, qr_id: str, version_id: int
+) -> Response:
+    request.app.state.binding_service.pin_version(
+        qr_id, version_id, "qr_download"
+    )
+    return Response(
+        content=request.app.state.qr_service.fixed_png(qr_id, version_id),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff"},
+    )

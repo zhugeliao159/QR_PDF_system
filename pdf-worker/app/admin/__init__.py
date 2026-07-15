@@ -1,0 +1,1 @@
+"""Chinese administrator interface."""

@@ -1,0 +1,1 @@
+{% extends "base.html" %}{% block content %}<section class="error-page"><p class="eyebrow">操作未完成</p><h1>{{ title or '系统处理失败' }}</h1><p>{{ message }}</p><a class="primary button-link" href="{% if admin %}/admin{% else %}/{% endif %}">返回</a></section>{% endblock %}

@@ -135,6 +135,7 @@ class PdfService:
         position: str,
         size_mm: float,
         margin_mm: float,
+        qr_url: str,
     ) -> tuple[str, int, str]:
         source_path = self.storage.resolve(source.relative_path)
         output_relative = f"generated-pdfs/{job_id}.pdf"
@@ -175,7 +176,7 @@ class PdfService:
                 )
                 page.insert_image(
                     insert_rect,
-                    stream=self.qr_service.png(qr_id),
+                    stream=self.qr_service.png_for_url(qr_url),
                     overlay=True,
                     keep_proportion=False,
                 )
@@ -215,18 +216,23 @@ class PdfService:
         size_mm: float,
         margin_mm: float,
         created_at: str,
+        qr_mode: str,
+        qr_version_id: int | None,
     ) -> None:
         with self.database.transaction() as connection:
             connection.execute(
                 """
                 INSERT INTO pdf_jobs
-                    (job_id, binding_id, source_original_filename, source_storage_path,
+                    (job_id, binding_id, qr_mode, qr_version_id,
+                     source_original_filename, source_storage_path,
                      page_number, position, size_mm, margin_mm, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?)
                 """,
                 (
                     job_id,
                     binding_id,
+                    qr_mode,
+                    qr_version_id,
                     source.original_filename,
                     source.relative_path,
                     page,
@@ -260,9 +266,18 @@ class PdfService:
         position: str,
         size_mm: float,
         margin_mm: float,
+        qr_mode: str = "dynamic",
     ) -> dict[str, Any]:
         self._validate_parameters(page, position, size_mm, margin_mm)
+        if qr_mode not in {"dynamic", "fixed"}:
+            raise AppError(422, "INVALID_QR_MODE", "qr_mode must be dynamic or fixed")
         binding = self.binding_service._binding_row(qr_id)
+        qr_version_id = int(binding["version_id"]) if qr_mode == "fixed" else None
+        qr_url = (
+            self.qr_service.fixed_url(qr_id, qr_version_id)
+            if qr_version_id is not None
+            else self.qr_service.qr_url(qr_id)
+        )
         job_id = uuid.uuid4().hex
         source = await self.storage.save_source_pdf(
             upload, job_id, self.settings.max_upload_size_bytes
@@ -281,6 +296,8 @@ class PdfService:
                 size_mm,
                 margin_mm,
                 created_at,
+                qr_mode,
+                qr_version_id,
             )
             inserted = True
             self._validate_source_pdf(source)
@@ -292,6 +309,7 @@ class PdfService:
                 position,
                 size_mm,
                 margin_mm,
+                qr_url,
             )
             with self.database.transaction() as connection:
                 connection.execute(
@@ -309,6 +327,15 @@ class PdfService:
                         job_id,
                     ),
                 )
+                if qr_version_id is not None:
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO version_references
+                            (version_id, reference_type, source_job_id, created_at)
+                        VALUES (?, 'pdf_job', ?, ?)
+                        """,
+                        (qr_version_id, job_id, utc_now_iso()),
+                    )
         except AppError as exc:
             if output_relative is not None:
                 self.storage.delete(output_relative)
@@ -375,6 +402,8 @@ class PdfService:
             "error_message": row["error_message"],
             "created_at": row["created_at"],
             "completed_at": row["completed_at"],
+            "qr_mode": row["qr_mode"],
+            "qr_version_id": row["qr_version_id"],
         }
 
     def download(self, job_id: str) -> tuple[Path, str]:
@@ -384,3 +413,30 @@ class PdfService:
         path = self.storage.resolve(row["output_storage_path"])
         stem = Path(row["source_original_filename"]).stem[:200] or "output"
         return path, f"{stem}_with_qr.pdf"
+
+    def preview_png(self, job_id: str) -> bytes:
+        row = self._job_row(job_id)
+        if row["status"] != "completed" or not row["output_storage_path"]:
+            raise AppError(409, "PDF_JOB_NOT_COMPLETED", "PDF job has no preview")
+        path = self.storage.resolve(row["output_storage_path"])
+        try:
+            with fitz.open(path) as document:
+                page = document.load_page(int(row["page_number"]) - 1)
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(1.2, 1.2), alpha=False)
+                return pixmap.tobytes("png")
+        except AppError:
+            raise
+        except Exception as exc:
+            raise AppError(500, "PDF_PREVIEW_FAILED", "PDF preview failed") from exc
+
+    def list_recent(self, limit: int = 6) -> list[dict[str, Any]]:
+        with self.database.read() as connection:
+            rows = connection.execute(
+                """
+                SELECT j.*, b.qr_id, b.title, b.display_code
+                FROM pdf_jobs j JOIN bindings b ON b.id = j.binding_id
+                ORDER BY j.created_at DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]

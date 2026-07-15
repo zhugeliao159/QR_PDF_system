@@ -4,6 +4,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile, status
 from fastapi.responses import FileResponse
 
 from app.schemas import PdfJobOut
+from app.responses import download_response
 
 
 router = APIRouter(prefix="/pdf/jobs", tags=["PDF jobs"])
@@ -18,6 +19,7 @@ async def create_pdf_job(
     position: str = Form("bottom-right"),
     size_mm: float | None = Form(None),
     margin_mm: float | None = Form(None),
+    qr_mode: str = Form("dynamic"),
 ) -> dict:
     settings = request.app.state.settings
     return await request.app.state.pdf_service.create_job(
@@ -27,6 +29,7 @@ async def create_pdf_job(
         position,
         settings.default_qr_size_mm if size_mm is None else size_mm,
         settings.default_qr_margin_mm if margin_mm is None else margin_mm,
+        qr_mode,
     )
 
 
@@ -38,10 +41,4 @@ def get_pdf_job(request: Request, job_id: str) -> dict:
 @router.get("/{job_id}/download")
 def download_pdf_job(request: Request, job_id: str) -> FileResponse:
     path, filename = request.app.state.pdf_service.download(job_id)
-    return FileResponse(
-        path,
-        media_type="application/pdf",
-        filename=filename,
-        content_disposition_type="attachment",
-        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
-    )
+    return download_response(path, filename, "application/pdf")

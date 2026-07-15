@@ -5,6 +5,7 @@ import logging
 import os
 import tempfile
 import uuid
+import unicodedata
 from pathlib import Path
 
 from fastapi import UploadFile
@@ -20,7 +21,19 @@ CHUNK_SIZE = 1024 * 1024
 
 
 def safe_display_filename(filename: str | None) -> str:
-    value = (filename or "upload.bin").replace("\\", "/").split("/")[-1]
+    value = filename or "upload.bin"
+    mojibake_markers = ("Ã", "Â", "å", "æ", "ç", "ä", "é", "ï")
+    if any(marker in value for marker in mojibake_markers):
+        for legacy_encoding in ("latin-1", "cp1252"):
+            try:
+                repaired = value.encode(legacy_encoding).decode("utf-8")
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                continue
+            if any("\u4e00" <= char <= "\u9fff" for char in repaired):
+                value = repaired
+                break
+    value = unicodedata.normalize("NFC", value)
+    value = value.replace("\\", "/").split("/")[-1]
     value = "".join(ch for ch in value if ch >= " " and ch != "\x7f").strip()
     return (value or "upload.bin")[:255]
 

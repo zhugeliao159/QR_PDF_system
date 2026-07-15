@@ -9,6 +9,8 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from app.database import SCHEMA_VERSION
+
 
 router = APIRouter(tags=["health"])
 
@@ -82,7 +84,7 @@ def capability_payload(request: Request) -> tuple[dict[str, Any], list[str]]:
         "exists": settings.database_path.is_file(),
         "readable": os.access(settings.database_path, os.R_OK),
         "writeable": os.access(settings.database_path, os.W_OK),
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
     }
     try:
         database.check_read_write()

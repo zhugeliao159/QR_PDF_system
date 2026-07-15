@@ -28,6 +28,15 @@ def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
     return value
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "true" if default else "false").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false")
+
+
 @dataclass(frozen=True)
 class Settings:
     public_base_url: str
@@ -40,11 +49,20 @@ class Settings:
     storage_root: Path
     input_dir: Path
     output_dir: Path
+    site_name: str = "练习册二维码管理系统"
+    admin_username: str = "admin"
+    admin_password_hash: str = ""
+    admin_api_token_hash: str = ""
+    session_secret: str = "test-session-secret-change-in-production-32-bytes"
+    session_cookie_secure: bool = False
+    session_max_age_seconds: int = 28800
+    enable_admin_api_docs: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
         public_base_url = os.getenv(
-            "PUBLIC_BASE_URL", "http://127.0.0.1:18081"
+            "PUBLIC_QR_BASE_URL",
+            os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:18081"),
         ).rstrip("/")
         parsed = urlparse(public_base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -52,7 +70,7 @@ class Settings:
         if parsed.query or parsed.fragment:
             raise ValueError("PUBLIC_BASE_URL cannot include a query or fragment")
 
-        return cls(
+        settings = cls(
             public_base_url=public_base_url,
             max_upload_size_mb=_env_int("MAX_UPLOAD_SIZE_MB", 100),
             max_pdf_pages=_env_int("MAX_PDF_PAGES", 500),
@@ -67,7 +85,21 @@ class Settings:
             ),
             input_dir=Path(os.getenv("PDF_INPUT_DIR", "/data/input")),
             output_dir=Path(os.getenv("PDF_OUTPUT_DIR", "/data/output")),
+            site_name=os.getenv("SITE_NAME", "练习册二维码管理系统").strip()
+            or "练习册二维码管理系统",
+            admin_username=os.getenv("ADMIN_USERNAME", "admin").strip() or "admin",
+            admin_password_hash=os.getenv("ADMIN_PASSWORD_HASH", "").strip(),
+            admin_api_token_hash=os.getenv("ADMIN_API_TOKEN_HASH", "").strip(),
+            session_secret=os.getenv("SESSION_SECRET", "").strip(),
+            session_cookie_secure=_env_bool("SESSION_COOKIE_SECURE", False),
+            session_max_age_seconds=_env_int("SESSION_MAX_AGE_SECONDS", 28800, 300),
+            enable_admin_api_docs=_env_bool("ENABLE_ADMIN_API_DOCS", False),
         )
+        if not settings.admin_password_hash:
+            raise ValueError("ADMIN_PASSWORD_HASH must be configured")
+        if len(settings.session_secret) < 32:
+            raise ValueError("SESSION_SECRET must contain at least 32 characters")
+        return settings
 
     @property
     def max_upload_size_bytes(self) -> int:
