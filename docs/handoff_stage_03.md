@@ -10,17 +10,17 @@ Windows 工作副本：`D:\codex_project\QRPDF_server\qr-exercise-prototype`
 
 第三阶段已经实现并部署。当前可以完全通过中文后台完成：新建解析资料、下载动态或固定二维码、给练习册 PDF 加二维码、查看目标页预览、下载结果、搜索资料、替换文件和恢复历史版本。
 
-QuickDrop 与 PDF Worker 均为 `healthy`。服务继续只监听 `127.0.0.1`；没有开放局域网或公网，没有执行 Git push。
+QuickDrop 与 PDF Worker 均为 `healthy`。经用户确认，PDF Worker 已临时开放到具体局域网地址 `192.168.100.20:18081` 供手机扫码测试；QuickDrop 仍只监听 `127.0.0.1`，未开放公网，也未执行 Git push。
 
 ## 立即使用
 
-在 Windows PowerShell 中保持以下命令运行：
+PDF Worker 直接通过局域网访问。仅使用 QuickDrop 时需要在 Windows PowerShell 中保持以下命令运行：
 
 ```powershell
-ssh -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 tx
+ssh -L 18080:127.0.0.1:18080 tx
 ```
 
-浏览器打开 <http://127.0.0.1:18081/admin>。管理员用户名为 `admin`，一次性初始密码只在最终交付消息中显示，不写入本文档。
+浏览器打开 <http://192.168.100.20:18081/admin>。管理员用户名为 `admin`，一次性初始密码不写入本文档。
 
 详细操作见 `docs/stage_03_admin_guide.md`。
 
@@ -30,7 +30,7 @@ ssh -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 tx
 
 固定二维码：`/r/{qr_id}/versions/{version_id}`，永远打开指定版本。固定引用会保护版本，自动历史清理不会删除它。
 
-正式定稿内容建议使用固定二维码；持续维护内容可使用动态二维码。当前二维码基础地址是 `127.0.0.1`，两种二维码都只能做本机流程测试，不能正式印刷。
+正式定稿内容建议使用固定二维码；持续维护内容可使用动态二维码。当前二维码基础地址是 `192.168.100.20`，两种二维码都只能在当前机构局域网测试，不能正式印刷。
 
 ## 原数据状态
 
@@ -49,7 +49,7 @@ ssh -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 tx
 - Swagger 和 OpenAPI 默认关闭。
 - Session Cookie 为签名、`HttpOnly`、`SameSite=Lax`，默认有效 8 小时。
 - 密码使用 scrypt 哈希；`.env` 与一次性凭据不进入 Git。
-- 端口仍为 `127.0.0.1:18080` 和 `127.0.0.1:18081`。
+- QuickDrop 为 `127.0.0.1:18080`；PDF Worker 为用户授权的 `192.168.100.20:18081`，没有绑定所有网卡。
 - PDF Worker 保持非 root、`cap_drop: ALL`、`no-new-privileges`、1 CPU、512 MiB、128 PIDs 和日志轮转。
 
 首次登录后应尽快按 README 的“修改管理员密码”步骤更换密码。
@@ -72,7 +72,7 @@ ssh -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 tx
 cd ~/projects/qr-exercise-prototype
 docker compose ps
 docker compose logs --tail=200 pdf-worker
-curl -fsS http://127.0.0.1:18081/health
+curl -fsS http://192.168.100.20:18081/health
 docker compose --profile test run --rm pdf-worker-tests
 ```
 

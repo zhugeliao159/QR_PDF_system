@@ -4,23 +4,23 @@
 
 ## 当前状态
 
-- 管理后台：<http://127.0.0.1:18081/admin>
-- 健康检查：<http://127.0.0.1:18081/health>
+- 管理后台：<http://192.168.100.20:18081/admin>
+- 健康检查：<http://192.168.100.20:18081/health>
 - QuickDrop：<http://127.0.0.1:18080>
 - 当前分支：`main`
 - 自动化测试：`57 passed, 0 failed, 0 skipped`
 
-两个服务默认只监听服务器 `127.0.0.1`。当前二维码也是本机测试地址，手机不能直接扫码访问，不得用于正式印刷。
+仓库默认配置只监听服务器 `127.0.0.1`。经用户确认，当前部署已临时切换为 `192.168.100.20:18081` 局域网测试模式；同一机构 Wi-Fi 内的手机可以扫码测试，但地址依赖当前网络，不得用于正式印刷。
 
 ## Windows 访问
 
-在 Windows PowerShell 中运行并保持窗口开启：
+PDF Worker 当前可直接通过局域网访问，不需要 SSH 隧道。只有访问 QuickDrop 时才需要在 Windows PowerShell 中保持下面的命令运行：
 
 ```powershell
-ssh -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 tx
+ssh -L 18080:127.0.0.1:18080 tx
 ```
 
-然后在浏览器打开 <http://127.0.0.1:18081/admin>。管理员不需要使用 Swagger，也不需要复制 `qr_id`。
+在浏览器打开 <http://192.168.100.20:18081/admin>。管理员不需要使用 Swagger，也不需要复制 `qr_id`。
 
 ## 管理员操作
 
@@ -42,7 +42,7 @@ docker compose config --quiet
 docker compose build pdf-worker
 docker compose up -d
 docker compose ps
-curl -fsS http://127.0.0.1:18081/health
+curl -fsS http://192.168.100.20:18081/health
 ```
 
 只更新 PDF Worker，不重启 QuickDrop：
