@@ -1,4 +1,4 @@
-from conftest import csrf_from, pdf_bytes
+from conftest import create_binding, csrf_from, pdf_bytes
 
 
 def test_dashboard_has_three_primary_actions(admin_client):
@@ -10,6 +10,9 @@ def test_dashboard_has_three_primary_actions(admin_client):
     assert "cdn" not in page.text.lower()
     assert admin_client.get("/static/css/admin.css").status_code == 200
     assert admin_client.get("/static/js/admin.js").status_code == 200
+    missing = admin_client.get("/admin/not-a-page")
+    assert missing.status_code == 404
+    assert "没有找到这个页面" in missing.text
 
 
 def test_create_search_edit_and_status_material(admin_client):
@@ -71,3 +74,22 @@ def test_create_requires_csrf(admin_client):
     )
     assert response.status_code == 422 or response.status_code == 403
     assert "Traceback" not in response.text
+
+
+def test_material_pagination_and_restore_is_not_get(admin_client):
+    first = create_binding(admin_client, b"first", "first.txt")
+    create_binding(admin_client, b"second", "second.txt")
+    page_one, total = admin_client.app.state.binding_service.list_materials(
+        page=1, page_size=1
+    )
+    page_two, _ = admin_client.app.state.binding_service.list_materials(
+        page=2, page_size=1
+    )
+    assert total == 2
+    assert len(page_one) == len(page_two) == 1
+    assert page_one[0]["qr_id"] != page_two[0]["qr_id"]
+    version_id = first["current_version"]["version_id"]
+    response = admin_client.get(
+        f"/admin/materials/{first['qr_id']}/restore/{version_id}"
+    )
+    assert response.status_code == 405

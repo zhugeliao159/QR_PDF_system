@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.admin import routes as admin_routes
 from app.admin.messages import chinese_error
@@ -96,7 +97,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     status_code=401,
                     content={"error": {"code": "ADMIN_AUTH_REQUIRED", "message": "administrator authentication required", "details": {}}},
                 )
-        return await call_next(request)
+        response = await call_next(request)
+        if path.startswith("/admin") and response.status_code == 404:
+            return html_error(request, 404, "没有找到这个页面。")
+        return response
 
     def html_error(request: Request, status: int, message: str) -> HTMLResponse:
         title = "页面已过期" if status == 403 else "操作未完成"
@@ -150,6 +154,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status_code=500,
             content={"error": {"code": "INTERNAL_ERROR", "message": "internal service error", "details": {}}},
         )
+
+    @application.exception_handler(StarletteHTTPException)
+    async def http_error_handler(request: Request, exc: StarletteHTTPException):
+        if request.url.path.startswith("/admin") or request.url.path.startswith("/r/"):
+            message = "没有找到这个页面。" if exc.status_code == 404 else "当前请求无法完成。"
+            return html_error(request, exc.status_code, message)
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     @application.get("/", include_in_schema=False)
     def root():

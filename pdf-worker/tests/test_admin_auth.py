@@ -1,5 +1,8 @@
+from dataclasses import replace
+
 from fastapi.testclient import TestClient
 
+from app.auth.session import COOKIE_NAME, SessionManager
 from app.main import create_app
 from conftest import csrf_from, login_admin
 
@@ -59,3 +62,14 @@ def test_management_api_is_protected_and_docs_hidden(admin_settings):
         login_admin(client)
         assert client.get("/bindings/missing").status_code == 404
         assert client.get("/capabilities").status_code == 200
+
+
+def test_expired_session_returns_to_login(admin_settings):
+    expired_settings = replace(admin_settings, session_max_age_seconds=-1)
+    manager = SessionManager(expired_settings)
+    token, _ = manager.create("admin")
+    with TestClient(create_app(expired_settings)) as client:
+        client.cookies.set(COOKIE_NAME, token)
+        response = client.get("/admin", follow_redirects=False)
+        assert response.status_code == 303
+        assert response.headers["location"] == "/admin/login"

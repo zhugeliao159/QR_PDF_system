@@ -13,8 +13,18 @@ def test_fixed_entry_stays_on_original_and_cross_binding_is_rejected(client):
         f"/bindings/{qr_id}/file",
         files={"file": ("new.txt", b"new", "text/plain")},
     )
+    new_version_id = client.get(f"/bindings/{qr_id}").json()["current_version"][
+        "version_id"
+    ]
+    assert client.get(
+        f"/bindings/{qr_id}/versions/{new_version_id}/qr.png"
+    ).status_code == 200
     assert client.get(f"/r/{qr_id}").content == b"new"
     assert client.get(f"/r/{qr_id}/versions/{version_id}").content == b"original"
+    rollback = client.post(f"/bindings/{qr_id}/rollback/{version_id}")
+    assert rollback.status_code == 200
+    assert client.get(f"/r/{qr_id}").content == b"original"
+    assert client.get(f"/r/{qr_id}/versions/{new_version_id}").content == b"new"
     versions = client.get(f"/bindings/{qr_id}/versions").json()
     assert next(item for item in versions if item["version_id"] == version_id)["is_pinned"]
 

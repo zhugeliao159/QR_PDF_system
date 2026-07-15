@@ -1,130 +1,122 @@
-# QR Exercise Prototype
+# 练习册二维码管理系统
 
-This internal prototype runs QuickDrop and a PDF Worker. Stage 02 adds permanent
-QR identifiers, five-version file bindings, rollback, and single-QR PDF stamping.
-Both services remain bound to the server loopback interface and are intended to
-be reached from Windows through an SSH tunnel.
+这是一个面向机构管理员的内部原型：上传答案或讲解资料，生成动态或固定版本二维码，并把二维码添加到练习册 PDF。第三阶段提供中文管理后台、管理员认证、资料版本管理和目标页预览。
 
-## Services and data
+## 当前状态
 
-- QuickDrop: `http://127.0.0.1:18080`
-- PDF Worker and OpenAPI: `http://127.0.0.1:18081/docs`
-- PDF Worker database: `data/pdf-worker/db/app.db`
-- Bound files: `data/pdf-worker/storage/bindings/`
-- Uploaded source PDFs: `data/pdf-worker/storage/source-pdfs/`
-- Generated PDFs: `data/pdf-worker/storage/generated-pdfs/`
-- Legacy worker paths: `data/pdf-worker/{input,output}/`
+- 管理后台：<http://127.0.0.1:18081/admin>
+- 健康检查：<http://127.0.0.1:18081/health>
+- QuickDrop：<http://127.0.0.1:18080>
+- 当前分支：`main`
+- 自动化测试：`57 passed, 0 failed, 0 skipped`
 
-All `data/` content and `.env` are excluded from Git. The PDF Worker owns its
-business database and storage. It does not read or edit the QuickDrop database.
+两个服务默认只监听服务器 `127.0.0.1`。当前二维码也是本机测试地址，手机不能直接扫码访问，不得用于正式印刷。
 
-## Configuration
+## Windows 访问
 
-Copy values from `.env.example` into `.env` and adjust them before starting.
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `QUICKDROP_PORT` | `18080` | Loopback QuickDrop port |
-| `PDF_WORKER_PORT` | `18081` | Loopback PDF Worker port |
-| `TZ` | `Asia/Shanghai` | Container timezone |
-| `PUBLIC_BASE_URL` | `http://127.0.0.1:18081` | Base embedded in QR codes and returned URLs |
-| `MAX_UPLOAD_SIZE_MB` | `100` | Application-enforced upload limit |
-| `MAX_PDF_PAGES` | `500` | PDF page limit |
-| `MAX_BINDING_VERSIONS` | `5` | Versions retained per permanent ID |
-| `DEFAULT_QR_SIZE_MM` | `20` | Default printed QR size |
-| `DEFAULT_QR_MARGIN_MM` | `10` | Default page-edge margin |
-| `PDF_WORKER_DATABASE_PATH` | `/data/db/app.db` | Container database path |
-| `PDF_WORKER_STORAGE_ROOT` | `/data/storage` | Container business storage root |
-
-`PUBLIC_BASE_URL=http://127.0.0.1:18081` works from the Windows computer that
-owns the SSH tunnel. A phone scanning the printed QR code resolves `127.0.0.1`
-to the phone itself, so it cannot reach this server. Keep the setting configurable;
-use a reachable LAN, Tailscale, or HTTPS domain only in a later deployment with
-the corresponding network and security design.
-
-## Start and update
-
-```bash
-cd ~/projects/qr-exercise-prototype
-docker compose config
-docker compose build pdf-worker
-docker compose up -d
-docker compose ps
-curl -fsS http://127.0.0.1:18081/health
-curl -fsS http://127.0.0.1:18081/capabilities
-```
-
-The database schema initializes idempotently on startup. Existing data is not
-deleted during an update. Stop without deleting volumes or bind-mounted data:
-
-```bash
-docker compose down
-```
-
-Never use `docker compose down -v` or delete `data/` for a normal update.
-
-## Windows access
-
-Keep this PowerShell session open:
+在 Windows PowerShell 中运行并保持窗口开启：
 
 ```powershell
 ssh -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 tx
 ```
 
-Open QuickDrop at `http://127.0.0.1:18080` and the PDF Worker API at
-`http://127.0.0.1:18081/docs`.
+然后在浏览器打开 <http://127.0.0.1:18081/admin>。管理员不需要使用 Swagger，也不需要复制 `qr_id`。
 
-## Core workflow
+## 管理员操作
 
-Create a binding:
+登录后有三个主要入口：
 
-```bash
-curl -F "file=@answer.pdf;type=application/pdf" \
-  -F "note=chapter 1" http://127.0.0.1:18081/bindings
-```
+1. “新建解析二维码”：填写名称、年级和学科，上传答案或讲解文件。
+2. “给练习册添加二维码”：选择已有资料，上传练习册 PDF，选择二维码方式、页码、大小和位置，预览后下载。
+3. “管理已有解析资料”：搜索资料、替换文件、恢复历史版本、编辑信息或停用资料。
 
-Use the returned `qr_id` in the following examples:
+动态二维码会跟随当前版本；固定二维码永久指向选定版本。详细步骤见 [管理员操作指南](docs/stage_03_admin_guide.md)。
 
-```bash
-curl -o qr.png http://127.0.0.1:18081/bindings/QR_ID/qr.png
-curl -OJ http://127.0.0.1:18081/r/QR_ID
+## 启动和更新
 
-curl -X PUT -F "file=@answer-v2.pdf;type=application/pdf" \
-  http://127.0.0.1:18081/bindings/QR_ID/file
-
-curl http://127.0.0.1:18081/bindings/QR_ID/versions
-curl -X POST http://127.0.0.1:18081/bindings/QR_ID/rollback/VERSION_ID
-
-curl -F "file=@exercise.pdf;type=application/pdf" \
-  -F "qr_id=QR_ID" -F "page=1" -F "position=bottom-right" \
-  -F "size_mm=20" -F "margin_mm=10" \
-  http://127.0.0.1:18081/pdf/jobs
-
-curl -OJ http://127.0.0.1:18081/pdf/jobs/JOB_ID/download
-```
-
-See `docs/stage_02_api.md` for response fields and error behavior.
-
-## Tests
-
-The test profile has no production data mounts and exposes no host ports:
+远端项目目录：`/home/user/projects/qr-exercise-prototype`。
 
 ```bash
-docker compose --profile test build pdf-worker-tests
-docker compose --profile test run --rm pdf-worker-tests
+cd ~/projects/qr-exercise-prototype
+docker compose config --quiet
+docker compose build pdf-worker
+docker compose up -d
+docker compose ps
+curl -fsS http://127.0.0.1:18081/health
 ```
 
-Stage 02 verification produced `29 passed`. The live E2E helper is intentionally
-separate because it creates records in the running PDF Worker:
+只更新 PDF Worker，不重启 QuickDrop：
 
 ```bash
-docker run --rm --network host -v /tmp/stage2-e2e:/work \
-  qr-exercise-prototype-pdf-worker-tests:local python tests/e2e_live.py
+docker compose build pdf-worker
+docker compose up -d --no-deps pdf-worker
 ```
 
-## Backup
+安全停止且保留数据：
 
-Stop services for a consistent file-level backup:
+```bash
+docker compose down
+```
+
+不要使用 `docker compose down -v`，不要删除 `data/`，不要直接修改 QuickDrop 数据库。
+
+## 配置
+
+真实配置保存在不进入 Git 的 `.env`。`.env.example` 只提供字段模板。
+
+| 变量 | 默认或示例 | 用途 |
+| --- | --- | --- |
+| `PDF_WORKER_BIND_ADDRESS` | `127.0.0.1` | Docker 在宿主机上的监听地址 |
+| `PDF_WORKER_PORT` | `18081` | PDF Worker 端口 |
+| `PUBLIC_QR_BASE_URL` | `http://127.0.0.1:18081` | 写进二维码的基础地址 |
+| `SITE_NAME` | `练习册二维码管理系统` | 页面名称 |
+| `ADMIN_USERNAME` | `admin` | 管理员账号 |
+| `ADMIN_PASSWORD_HASH` | 空模板 | scrypt 密码哈希，必须在部署前设置 |
+| `SESSION_SECRET` | 空模板 | Session 签名密钥，必须在部署前设置 |
+| `SESSION_COOKIE_SECURE` | `false` | HTTPS 正式部署时改为 `true` |
+| `SESSION_MAX_AGE_SECONDS` | `28800` | 管理员会话有效期 |
+| `ENABLE_ADMIN_API_DOCS` | `false` | 是否启用受登录保护的 API 文档 |
+| `MAX_UPLOAD_SIZE_MB` | `100` | 单文件大小限制 |
+| `MAX_PDF_PAGES` | `500` | PDF 页数限制 |
+| `MAX_BINDING_VERSIONS` | `5` | 每份资料保留的普通历史版本数；固定版本另行保护 |
+
+初次部署可在构建好的容器中运行安全初始化脚本。脚本会拒绝覆盖已有配置，并把一次性初始密码写入明确指定、权限为 0600 的临时文件：
+
+```bash
+docker compose run --rm --no-deps -v "$PWD:/work" pdf-worker \
+  python scripts/bootstrap_admin_env.py /work/.env /work/initial-password
+```
+
+当前服务器已完成初始化，不要重复执行。
+
+## 修改管理员密码
+
+在服务器终端运行：
+
+```bash
+cd ~/projects/qr-exercise-prototype
+docker compose run --rm --no-deps pdf-worker python scripts/set_admin_password.py
+```
+
+按提示输入至少 16 个字符的新密码，把输出的整行哈希写入 `.env` 的 `ADMIN_PASSWORD_HASH`，然后执行：
+
+```bash
+docker compose up -d --force-recreate --no-deps pdf-worker
+```
+
+新密码和输出哈希不要发给学生，也不要提交到 Git。
+
+## 数据和迁移
+
+- SQLite：`data/pdf-worker/db/app.db`
+- 数据库迁移备份：`data/pdf-worker/db/backups/`
+- 绑定文件：`data/pdf-worker/storage/bindings/`
+- 上传的练习册：`data/pdf-worker/storage/source-pdfs/`
+- 生成的练习册：`data/pdf-worker/storage/generated-pdfs/`
+
+数据库启动时执行幂等 migration。版本 1 升级到版本 2 前会使用 SQLite backup API 生成备份，原有二维码、版本和 PDF job 不会被删除。
+
+一致性整库备份建议先停止服务：
 
 ```bash
 cd ~/projects/qr-exercise-prototype
@@ -133,17 +125,35 @@ tar -czf ../qr-exercise-data-$(date +%F).tar.gz data/
 docker compose up -d
 ```
 
-## Security boundary
+## 测试
 
-The prototype has no user authentication or authorization. It relies on
-loopback-only publishing and SSH access. The PDF Worker runs as a non-root user,
-drops all Linux capabilities, enables `no-new-privileges`, limits CPU, memory,
-and PIDs, and rotates Docker logs. Uploaded names are display metadata only;
-storage names are generated and resolved within the configured root.
+测试容器不挂载正式数据，也不发布主机端口：
 
-## Not implemented
+```bash
+docker compose --profile test build pdf-worker-tests
+docker compose --profile test run --rm pdf-worker-tests
+```
 
-Batch upload/stamping/export, multiple QR codes per PDF, PDF merge, arbitrary
-coordinates or drag-and-drop placement, users and roles, scan analytics, public
-domain and HTTPS, Redis/Celery/queues, external databases, Kubernetes, and a
-production backup/restore system remain outside Stage 02.
+第三阶段最终结果为 `57 passed, 0 failed, 0 skipped`。
+
+## 安全边界
+
+- 管理页面需要签名 Session，状态修改表单有 CSRF 防护。
+- 管理 API 在生产配置中需要管理员会话或可选 Bearer 令牌。
+- 学生动态和固定版本入口保持公开只读。
+- Swagger/OpenAPI 默认关闭。
+- PDF Worker 以非 root 用户运行，丢弃全部 Linux capabilities，启用 `no-new-privileges`，限制为 1 CPU、512 MiB 和 128 PIDs，并启用日志轮转。
+- QuickDrop 独立运行，PDF Worker 不读取或修改其数据库。
+
+## 文档
+
+- [产品说明](docs/stage_03_product_spec.md)
+- [管理员操作指南](docs/stage_03_admin_guide.md)
+- [网络模式指南](docs/stage_03_network_guide.md)
+- [第三阶段报告](docs/stage_03_report.md)
+- [第三阶段交接](docs/handoff_stage_03.md)
+- [第二阶段 API 说明](docs/stage_02_api.md)
+
+## 当前未实现
+
+多管理员和角色、审计日志、批量处理、多二维码、任意坐标、扫码统计、学生账号、公网域名和 HTTPS、自动备份恢复、监控告警及高可用仍不在第三阶段范围内。
