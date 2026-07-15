@@ -1,0 +1,111 @@
+name: qr-exercise-prototype
+
+services:
+  quickdrop:
+    image: dockerproxy.net/roastslav/quickdrop:v1.5.3@sha256:f47e2bd7ec0fc5f3dc984f17f83fc7fd4361093bff0f15b4357553ed16bf159b
+    user: "1000:1000"
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    ports:
+      - "127.0.0.1:${QUICKDROP_PORT}:8080"
+    volumes:
+      - ./data/quickdrop/db:/app/db
+      - ./data/quickdrop/files:/app/files
+      - ./data/quickdrop/logs:/app/log
+    networks:
+      - qr-prototype-network
+    cpus: "1.0"
+    mem_limit: 1g
+    pids_limit: 256
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  pdf-worker:
+    build:
+      context: ./pdf-worker
+      dockerfile: Dockerfile
+      target: runtime
+    image: qr-exercise-prototype-pdf-worker:local
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      PDF_INPUT_DIR: /data/input
+      PDF_OUTPUT_DIR: /data/output
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB}
+      MAX_PDF_PAGES: ${MAX_PDF_PAGES}
+      MAX_BINDING_VERSIONS: ${MAX_BINDING_VERSIONS}
+      DEFAULT_QR_SIZE_MM: ${DEFAULT_QR_SIZE_MM}
+      DEFAULT_QR_MARGIN_MM: ${DEFAULT_QR_MARGIN_MM}
+      PDF_WORKER_DATABASE_PATH: ${PDF_WORKER_DATABASE_PATH}
+      PDF_WORKER_STORAGE_ROOT: ${PDF_WORKER_STORAGE_ROOT}
+    ports:
+      - "127.0.0.1:${PDF_WORKER_PORT}:8000"
+    volumes:
+      - ./data/pdf-worker/input:/data/input:ro
+      - ./data/pdf-worker/output:/data/output
+      - ./data/pdf-worker/db:/data/db
+      - ./data/pdf-worker/storage:/data/storage
+    networks:
+      - qr-prototype-network
+    cpus: "1.0"
+    mem_limit: 512m
+    pids_limit: 128
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  pdf-worker-tests:
+    profiles: ["test"]
+    build:
+      context: ./pdf-worker
+      dockerfile: Dockerfile
+      target: test
+    image: qr-exercise-prototype-pdf-worker-tests:local
+    pull_policy: never
+    environment:
+      TZ: ${TZ}
+    networks:
+      - qr-prototype-network
+    cpus: "1.0"
+    mem_limit: 512m
+    pids_limit: 128
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  qr-prototype-network:
+    name: qr-prototype-network
+    driver: bridge
