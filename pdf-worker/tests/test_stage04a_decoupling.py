@@ -83,13 +83,19 @@ def test_stage04a_migration_preserves_identity_content_and_references(tmp_path):
     database = Database(path)
     database.initialize()
     assert database.last_backup_path and database.last_backup_path.is_file()
-    backup = sqlite3.connect(database.last_backup_path)
+    stage04_backup_path = next(
+        item for item in (path.parent / "backups").iterdir() if "stage04a-v2" in item.name
+    )
+    backup = sqlite3.connect(stage04_backup_path)
     assert backup.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     assert backup.execute("PRAGMA user_version").fetchone()[0] == 2
     backup.close()
+    stage05_backup = sqlite3.connect(database.last_backup_path)
+    assert stage05_backup.execute("PRAGMA user_version").fetchone()[0] == 3
+    stage05_backup.close()
 
     with database.read() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         resource = connection.execute("SELECT * FROM answer_resources").fetchone()
         revision = connection.execute("SELECT * FROM answer_revisions").fetchone()
         asset = connection.execute("SELECT * FROM assets").fetchone()

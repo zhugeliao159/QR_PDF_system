@@ -18,6 +18,8 @@
 {% else %}
 <section class="draft-summary">
   <dl class="info-list"><div><dt>文件名</dt><dd>{{ draft.original_filename }}</dd></div><div><dt>文件大小</dt><dd>{{ (draft.size_bytes / 1024)|round(1) }} KB</dd></div><div><dt>创建时间</dt><dd>{{ draft.created_at }}</dd></div><div><dt>版本说明</dt><dd>{{ draft.note or '无' }}</dd></div></dl>
+  <p class="muted">预览状态：{{ preview_status_labels.get(draft.preview.status, '尚未生成预览') }}{% if draft.preview.error_code %}（{{ draft.preview.error_code }}）{% endif %}</p>
+  <a class="secondary button-link" href="/admin/materials/{{ material.qr_id }}/versions/{{ draft.revision_key }}/previews">管理预览</a>
   <a class="secondary button-link" href="/admin/materials/{{ material.qr_id }}/drafts/{{ draft.revision_key }}/file?download=true">{% if draft.content_kind == 'image' %}下载图片{% else %}下载草稿{% endif %}</a>
 </section>
 {% if draft.content_kind == 'pdf' %}

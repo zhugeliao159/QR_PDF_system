@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-heading"><div><p class="eyebrow">{{ material.display_code }}</p><h1>预览生成状态</h1><p class="muted">第 {{ version.revision_number }} 版 · {{ version.original_filename or '外部网页' }}</p></div><a href="/admin/materials/{{ material.qr_id }}">返回资料详情</a></header>
+{% if success %}<div class="notice success">{{ success }}</div>{% endif %}
+{% if error %}<div class="notice danger">{{ error }}</div>{% endif %}
+<section class="content-section">
+  <dl class="info-list">
+    <div><dt>状态</dt><dd>{{ preview_status_labels.get(preview.status, '尚未生成预览') }}</dd></div>
+    <div><dt>已渲染页数</dt><dd>{{ preview.rendered_pages or 0 }}{% if preview.total_pages %} / {{ preview.total_pages }}{% endif %}</dd></div>
+    <div><dt>预览页数</dt><dd>{{ preview.page_count or 0 }}</dd></div>
+    <div><dt>预览总大小</dt><dd>{{ ((preview.total_size_bytes or 0) / 1024)|round(1) }} KB</dd></div>
+    {% if preview.completed_at %}<div><dt>生成时间</dt><dd>{{ preview.completed_at }}</dd></div>{% endif %}
+    {% if preview.error_code %}<div><dt>错误代码</dt><dd>{{ preview.error_code }}</dd></div>{% endif %}
+  </dl>
+  {% if version.target_type == 'file' %}
+  <form method="post" action="/admin/materials/{{ material.qr_id }}/versions/{{ version.revision_key }}/previews">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {% if preview.status == 'completed' %}<input type="hidden" name="force" value="yes">{% endif %}
+    <button class="primary" type="submit">{% if preview.status == 'completed' %}重新生成预览{% else %}生成预览{% endif %}</button>
+  </form>
+  {% endif %}
+</section>
+{% if pages %}
+<section class="content-section"><div class="section-heading"><h2>预览页面</h2></div><div class="draft-image">{% for page in pages %}<figure><img src="/admin/materials/{{ material.qr_id }}/versions/{{ version.revision_key }}/previews/pages/{{ page.page_number }}" alt="第 {{ page.page_number }} 页预览"><figcaption>第 {{ page.page_number }} 页 · {{ page.width }} × {{ page.height }}</figcaption></figure>{% endfor %}</div></section>
+{% endif %}
+{% endblock %}

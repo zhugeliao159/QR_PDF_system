@@ -287,8 +287,8 @@ def validate(database_path: Path, storage_root: Path) -> dict[str, Any]:
                 )
         if integrity_check != "ok":
             errors.append(f"integrity_check={integrity_check}")
-        if schema_version != 3:
-            errors.append(f"schema_version={schema_version}, expected 3")
+        if schema_version < 3:
+            errors.append(f"schema_version={schema_version}, expected at least 3")
 
         passed = not errors and not any(mismatches.values())
         return {

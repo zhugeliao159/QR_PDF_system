@@ -6,7 +6,7 @@ from collections import defaultdict
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from app.admin.messages import chinese_error
 from app.auth.password import verify_password
@@ -18,6 +18,14 @@ from app.services.binding_service import GRADES, SUBJECTS
 
 router = APIRouter(prefix="/admin", tags=["管理员后台"])
 LOGIN_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
+PREVIEW_STATUS_LABELS = {
+    "not_generated": "尚未生成预览",
+    "pending": "等待生成预览",
+    "processing": "正在生成预览",
+    "completed": "预览生成完成",
+    "failed": "预览生成失败",
+    "superseded": "预览已被新版本替代",
+}
 
 
 def _context(request: Request, **values: Any) -> dict[str, Any]:
@@ -32,6 +40,7 @@ def _context(request: Request, **values: Any) -> dict[str, Any]:
         "subjects": sorted(SUBJECTS, key=lambda item: (item != "未分类", item)),
         "allow_external_urls": settings.allow_external_urls,
         "allow_private_http_external_urls": settings.allow_private_http_external_urls,
+        "preview_status_labels": PREVIEW_STATUS_LABELS,
     }
     context.update(values)
     return context
@@ -52,6 +61,16 @@ def _csrf(request: Request, token: str | None) -> None:
 def _actor(request: Request) -> str:
     session = getattr(request.state, "admin", None)
     return session.username if session is not None else "admin"
+
+
+def _preview_revision(request: Request, qr_id: str, revision_key: str) -> tuple[dict, dict]:
+    resolved = request.app.state.resolver_service.resolve_latest(
+        qr_id, allow_inactive=True
+    )
+    revision = request.app.state.revision_service.get_by_key(
+        resolved.resource["id"], revision_key
+    )
+    return request.app.state.binding_service.get_binding(qr_id, allow_inactive=True), revision
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -378,6 +397,78 @@ def open_published_version(request: Request, qr_id: str, revision_key: str):
         target,
         status_code=307,
         headers={"Cache-Control": "no-store, must-revalidate", "Referrer-Policy": "no-referrer"},
+    )
+
+
+@router.get(
+    "/materials/{qr_id}/versions/{revision_key}/previews", response_class=HTMLResponse
+)
+def preview_pages(request: Request, qr_id: str, revision_key: str, queued: int = 0):
+    material, revision = _preview_revision(request, qr_id, revision_key)
+    status = request.app.state.preview_service.status_for_revision(revision["id"])
+    pages = (
+        request.app.state.preview_service.list_pages(revision["id"])
+        if status and status["status"] == "completed"
+        else []
+    )
+    return _render(
+        request,
+        "materials/preview.html",
+        material=material,
+        version=revision,
+        preview=status or {"status": "not_generated"},
+        pages=pages,
+        success="已提交预览生成任务。" if queued else "",
+    )
+
+
+@router.post("/materials/{qr_id}/versions/{revision_key}/previews")
+def generate_preview(
+    request: Request,
+    qr_id: str,
+    revision_key: str,
+    csrf_token: str = Form(...),
+    force: str = Form(""),
+):
+    _csrf(request, csrf_token)
+    material, revision = _preview_revision(request, qr_id, revision_key)
+    try:
+        request.app.state.preview_service.request_preview(
+            revision["id"], force=force == "yes"
+        )
+    except AppError as exc:
+        status = request.app.state.preview_service.status_for_revision(revision["id"])
+        pages = (
+            request.app.state.preview_service.list_pages(revision["id"])
+            if status and status["status"] == "completed"
+            else []
+        )
+        return _render(
+            request,
+            "materials/preview.html",
+            status_code=exc.status_code,
+            material=material,
+            version=revision,
+            preview=status or {"status": "not_generated"},
+            pages=pages,
+            error=chinese_error(exc.code, "预览生成任务未能创建。"),
+        )
+    return RedirectResponse(
+        f"/admin/materials/{qr_id}/versions/{revision_key}/previews?queued=1",
+        status_code=303,
+    )
+
+
+@router.get("/materials/{qr_id}/versions/{revision_key}/previews/pages/{page_number}")
+def preview_page_file(
+    request: Request, qr_id: str, revision_key: str, page_number: int
+):
+    _, revision = _preview_revision(request, qr_id, revision_key)
+    path, _ = request.app.state.preview_service.page_path(revision["id"], page_number)
+    return FileResponse(
+        path,
+        media_type="image/webp",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
     )
 
 

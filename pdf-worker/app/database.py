@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DISPLAY_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
 LEGACY_SCHEMA_SQL = """
@@ -243,7 +243,90 @@ CREATE INDEX IF NOT EXISTS idx_pdf_jobs_v2_resource
     ON pdf_jobs_v2(resource_id, created_at DESC);
 """
 
-SCHEMA_SQL = LEGACY_SCHEMA_SQL + DECOUPLED_SCHEMA_SQL
+PREVIEW_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS preview_sets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    preview_key TEXT NOT NULL UNIQUE,
+    revision_id INTEGER NOT NULL,
+    source_asset_id INTEGER NOT NULL,
+    source_sha256 TEXT NOT NULL,
+    renderer_version TEXT NOT NULL,
+    render_config_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+        status IN ('pending', 'processing', 'completed', 'failed', 'superseded')
+    ),
+    page_count INTEGER NOT NULL DEFAULT 0 CHECK (page_count >= 0),
+    total_size_bytes INTEGER NOT NULL DEFAULT 0 CHECK (total_size_bytes >= 0),
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    FOREIGN KEY (revision_id) REFERENCES answer_revisions(id) ON DELETE RESTRICT,
+    FOREIGN KEY (source_asset_id) REFERENCES assets(id) ON DELETE RESTRICT,
+    CHECK (status != 'completed' OR page_count > 0),
+    CHECK (status != 'completed' OR completed_at IS NOT NULL)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_preview_sets_completed_config
+    ON preview_sets(revision_id, renderer_version, render_config_hash)
+    WHERE status = 'completed';
+
+CREATE INDEX IF NOT EXISTS idx_preview_sets_revision_status
+    ON preview_sets(revision_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS preview_pages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    preview_set_id INTEGER NOT NULL,
+    page_number INTEGER NOT NULL CHECK (page_number >= 1),
+    storage_backend TEXT NOT NULL DEFAULT 'local' CHECK (storage_backend = 'local'),
+    storage_key TEXT NOT NULL UNIQUE,
+    mime_type TEXT NOT NULL CHECK (mime_type = 'image/webp'),
+    width INTEGER NOT NULL CHECK (width > 0),
+    height INTEGER NOT NULL CHECK (height > 0),
+    size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
+    sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (preview_set_id) REFERENCES preview_sets(id) ON DELETE RESTRICT,
+    UNIQUE (preview_set_id, page_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_pages_set_number
+    ON preview_pages(preview_set_id, page_number);
+
+CREATE TABLE IF NOT EXISTS preview_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_key TEXT NOT NULL UNIQUE,
+    revision_id INTEGER NOT NULL,
+    preview_set_id INTEGER,
+    renderer_version TEXT NOT NULL,
+    render_config_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+        status IN ('pending', 'processing', 'completed', 'failed', 'cancelled')
+    ),
+    total_pages INTEGER,
+    rendered_pages INTEGER NOT NULL DEFAULT 0 CHECK (rendered_pages >= 0),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    max_attempts INTEGER NOT NULL DEFAULT 2 CHECK (max_attempts >= 1),
+    claimed_at TEXT,
+    worker_id TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT,
+    FOREIGN KEY (revision_id) REFERENCES answer_revisions(id) ON DELETE RESTRICT,
+    FOREIGN KEY (preview_set_id) REFERENCES preview_sets(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_preview_jobs_active_config
+    ON preview_jobs(revision_id, renderer_version, render_config_hash)
+    WHERE status IN ('pending', 'processing');
+
+CREATE INDEX IF NOT EXISTS idx_preview_jobs_status_created
+    ON preview_jobs(status, created_at);
+"""
+
+SCHEMA_SQL = LEGACY_SCHEMA_SQL + DECOUPLED_SCHEMA_SQL + PREVIEW_SCHEMA_SQL
 
 
 def new_display_code() -> str:
@@ -265,6 +348,7 @@ class Database:
         connection = sqlite3.connect(self.path, timeout=self.busy_timeout_ms / 1000)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA journal_mode = WAL")
         connection.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
         return connection
 
@@ -512,6 +596,13 @@ class Database:
 
         connection.execute("PRAGMA user_version = 3")
 
+    @staticmethod
+    def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
+        for statement in PREVIEW_SCHEMA_SQL.split(";"):
+            if statement.strip():
+                connection.execute(statement)
+        connection.execute("PRAGMA user_version = 4")
+
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
@@ -551,6 +642,18 @@ class Database:
                     connection.rollback()
                     raise
             version = 3
+
+        if version == 3:
+            self._backup("stage05a", version)
+            with self.connect() as connection:
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._migrate_v3_to_v4(connection)
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
+            version = 4
 
         if version < SCHEMA_VERSION:
             raise RuntimeError(

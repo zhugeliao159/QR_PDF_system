@@ -31,6 +31,10 @@ ERROR_MESSAGES = {
     "EXTERNAL_URL_ADDRESS_BLOCKED": "该网址指向本机、内网或其他受限地址，不能使用。",
     "EXTERNAL_URL_DNS_FAILED": "无法确认该网站的网络地址，请检查域名后重试。",
     "EXTERNAL_URL_CONFIRM_REQUIRED": "请确认该网址内容适合学生访问。",
+    "PREVIEW_TARGET_UNSUPPORTED": "只有 PDF、PNG、JPEG 或 WebP 文件可以生成预览。",
+    "PREVIEW_FILE_TYPE_UNSUPPORTED": "当前文件类型不能生成预览。",
+    "PREVIEW_SOURCE_HASH_MISMATCH": "原始文件完整性校验失败，预览未生成。",
+    "PREVIEW_REQUIRED": "必须先成功生成预览，才能发布这个文件版本。",
 }
 
 

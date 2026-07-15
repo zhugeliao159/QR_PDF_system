@@ -44,7 +44,7 @@ def test_v1_migration_preserves_data_and_is_idempotent(tmp_path):
     database.initialize()
     assert database.last_backup_path and database.last_backup_path.is_file()
     with database.read() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         binding = connection.execute("SELECT * FROM bindings").fetchone()
         assert binding["title"] == "旧资料"
         assert binding["display_code"].startswith("QR-")
@@ -57,5 +57,8 @@ def test_v1_migration_preserves_data_and_is_idempotent(tmp_path):
         assert connection.execute("SELECT COUNT(*) FROM qr_aliases").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM pdf_jobs_v2").fetchone()[0] == 1
     backups_before = list((tmp_path / "backups").iterdir())
+    assert any("stage03-v1" in path.name for path in backups_before)
+    assert any("stage04a-v2" in path.name for path in backups_before)
+    assert any("stage05a-v3" in path.name for path in backups_before)
     Database(path).initialize()
     assert list((tmp_path / "backups").iterdir()) == backups_before

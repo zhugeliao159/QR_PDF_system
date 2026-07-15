@@ -73,6 +73,16 @@ class Settings:
     external_url_allowed_hosts: tuple[str, ...] = ()
     external_url_blocked_hosts: tuple[str, ...] = ()
     external_url_require_https: bool = True
+    preview_dpi: int = 144
+    preview_webp_quality: int = 82
+    preview_webp_method: int = 4
+    preview_max_pages: int = 500
+    preview_max_render_width: int = 2000
+    preview_render_version: str = "v1"
+    preview_job_max_attempts: int = 2
+    preview_job_stale_seconds: int = 900
+    preview_worker_poll_seconds: float = 2.0
+    require_preview_before_publish: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -121,6 +131,18 @@ class Settings:
             external_url_require_https=_env_bool(
                 "EXTERNAL_URL_REQUIRE_HTTPS", True
             ),
+            preview_dpi=_env_int("PREVIEW_DPI", 144),
+            preview_webp_quality=_env_int("PREVIEW_WEBP_QUALITY", 82, 1),
+            preview_webp_method=_env_int("PREVIEW_WEBP_METHOD", 4, 0),
+            preview_max_pages=_env_int("PREVIEW_MAX_PAGES", 500),
+            preview_max_render_width=_env_int("PREVIEW_MAX_RENDER_WIDTH", 2000),
+            preview_render_version=os.getenv("PREVIEW_RENDER_VERSION", "v1").strip() or "v1",
+            preview_job_max_attempts=_env_int("PREVIEW_JOB_MAX_ATTEMPTS", 2),
+            preview_job_stale_seconds=_env_int("PREVIEW_JOB_STALE_SECONDS", 900),
+            preview_worker_poll_seconds=_env_float("PREVIEW_WORKER_POLL_SECONDS", 2.0, 0.1),
+            require_preview_before_publish=_env_bool(
+                "REQUIRE_PREVIEW_BEFORE_PUBLISH", False
+            ),
         )
         if not settings.admin_password_hash:
             raise ValueError("ADMIN_PASSWORD_HASH must be configured")
@@ -149,6 +171,10 @@ class Settings:
         return self.storage_root / "generated-pdfs"
 
     @property
+    def previews_dir(self) -> Path:
+        return self.storage_root / "previews"
+
+    @property
     def trash_dir(self) -> Path:
         return self.storage_root / ".trash"
 
@@ -159,6 +185,7 @@ class Settings:
             self.bindings_dir,
             self.source_pdfs_dir,
             self.generated_pdfs_dir,
+            self.previews_dir,
             self.trash_dir,
             self.input_dir,
             self.output_dir,

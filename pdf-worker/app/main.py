@@ -27,6 +27,7 @@ from app.services.decoupled import (
     QrResolverService,
 )
 from app.services.pdf_service import PdfService
+from app.services.preview_service import PreviewService
 from app.services.qr_service import QrService
 from app.services.external_url import ExternalUrlValidator
 from app.storage.local import LocalStorageBackend
@@ -54,7 +55,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         resource_service = AnswerResourceService(database)
         external_url_validator = ExternalUrlValidator(configured_settings)
         revision_service = AnswerRevisionService(
-            database, asset_service, external_url_validator
+            database,
+            asset_service,
+            external_url_validator,
+            configured_settings.require_preview_before_publish,
+        )
+        preview_service = PreviewService(
+            configured_settings, database, storage, asset_service
         )
         resolver_service = QrResolverService(database)
         binding_service = BindingService(
@@ -67,6 +74,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             asset_service,
             resolver_service,
             external_url_validator,
+            preview_service,
         )
         pdf_service = PdfService(
             configured_settings, database, storage, binding_service, qr_service
@@ -77,6 +85,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.asset_service = asset_service
         application.state.resource_service = resource_service
         application.state.revision_service = revision_service
+        application.state.preview_service = preview_service
         application.state.external_url_validator = external_url_validator
         application.state.resolver_service = resolver_service
         application.state.binding_service = binding_service

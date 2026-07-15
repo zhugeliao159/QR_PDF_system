@@ -71,6 +71,16 @@ services:
       EXTERNAL_URL_REQUIRE_HTTPS: ${EXTERNAL_URL_REQUIRE_HTTPS:-true}
       EXTERNAL_URL_ALLOWED_HOSTS: ${EXTERNAL_URL_ALLOWED_HOSTS:-}
       EXTERNAL_URL_BLOCKED_HOSTS: ${EXTERNAL_URL_BLOCKED_HOSTS:-}
+      PREVIEW_DPI: ${PREVIEW_DPI:-144}
+      PREVIEW_WEBP_QUALITY: ${PREVIEW_WEBP_QUALITY:-82}
+      PREVIEW_WEBP_METHOD: ${PREVIEW_WEBP_METHOD:-4}
+      PREVIEW_MAX_PAGES: ${PREVIEW_MAX_PAGES:-500}
+      PREVIEW_MAX_RENDER_WIDTH: ${PREVIEW_MAX_RENDER_WIDTH:-2000}
+      PREVIEW_RENDER_VERSION: ${PREVIEW_RENDER_VERSION:-v1}
+      PREVIEW_JOB_MAX_ATTEMPTS: ${PREVIEW_JOB_MAX_ATTEMPTS:-2}
+      PREVIEW_JOB_STALE_SECONDS: ${PREVIEW_JOB_STALE_SECONDS:-900}
+      PREVIEW_WORKER_POLL_SECONDS: ${PREVIEW_WORKER_POLL_SECONDS:-2}
+      REQUIRE_PREVIEW_BEFORE_PUBLISH: ${REQUIRE_PREVIEW_BEFORE_PUBLISH:-false}
     ports:
       - "${PDF_WORKER_BIND_ADDRESS:-127.0.0.1}:${PDF_WORKER_PORT}:8000"
     volumes:
@@ -99,6 +109,70 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  preview-worker:
+    build:
+      context: ./pdf-worker
+      dockerfile: Dockerfile
+      target: runtime
+    image: qr-exercise-prototype-pdf-worker:local
+    pull_policy: never
+    command: ["python", "-m", "app.preview_worker"]
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB}
+      MAX_IMAGE_SIZE_MB: ${MAX_IMAGE_SIZE_MB:-30}
+      MAX_IMAGE_PIXELS: ${MAX_IMAGE_PIXELS:-40000000}
+      MAX_PDF_PAGES: ${MAX_PDF_PAGES}
+      MAX_BINDING_VERSIONS: ${MAX_BINDING_VERSIONS}
+      DEFAULT_QR_SIZE_MM: ${DEFAULT_QR_SIZE_MM}
+      DEFAULT_QR_MARGIN_MM: ${DEFAULT_QR_MARGIN_MM}
+      PDF_WORKER_DATABASE_PATH: ${PDF_WORKER_DATABASE_PATH}
+      PDF_WORKER_STORAGE_ROOT: ${PDF_WORKER_STORAGE_ROOT}
+      SITE_NAME: ${SITE_NAME:-练习册二维码管理系统}
+      PUBLIC_QR_BASE_URL: ${PUBLIC_QR_BASE_URL:-http://127.0.0.1:18081}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      ADMIN_API_TOKEN_HASH: ${ADMIN_API_TOKEN_HASH:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      SESSION_MAX_AGE_SECONDS: ${SESSION_MAX_AGE_SECONDS:-28800}
+      ENABLE_ADMIN_API_DOCS: "false"
+      ALLOW_EXTERNAL_URLS: ${ALLOW_EXTERNAL_URLS:-false}
+      ALLOW_PRIVATE_HTTP_EXTERNAL_URLS: ${ALLOW_PRIVATE_HTTP_EXTERNAL_URLS:-false}
+      EXTERNAL_URL_REQUIRE_HTTPS: ${EXTERNAL_URL_REQUIRE_HTTPS:-true}
+      EXTERNAL_URL_ALLOWED_HOSTS: ${EXTERNAL_URL_ALLOWED_HOSTS:-}
+      EXTERNAL_URL_BLOCKED_HOSTS: ${EXTERNAL_URL_BLOCKED_HOSTS:-}
+      PREVIEW_DPI: ${PREVIEW_DPI:-144}
+      PREVIEW_WEBP_QUALITY: ${PREVIEW_WEBP_QUALITY:-82}
+      PREVIEW_WEBP_METHOD: ${PREVIEW_WEBP_METHOD:-4}
+      PREVIEW_MAX_PAGES: ${PREVIEW_MAX_PAGES:-500}
+      PREVIEW_MAX_RENDER_WIDTH: ${PREVIEW_MAX_RENDER_WIDTH:-2000}
+      PREVIEW_RENDER_VERSION: ${PREVIEW_RENDER_VERSION:-v1}
+      PREVIEW_JOB_MAX_ATTEMPTS: ${PREVIEW_JOB_MAX_ATTEMPTS:-2}
+      PREVIEW_JOB_STALE_SECONDS: ${PREVIEW_JOB_STALE_SECONDS:-900}
+      PREVIEW_WORKER_POLL_SECONDS: ${PREVIEW_WORKER_POLL_SECONDS:-2}
+      REQUIRE_PREVIEW_BEFORE_PUBLISH: ${REQUIRE_PREVIEW_BEFORE_PUBLISH:-false}
+    volumes:
+      - ./data/pdf-worker/db:/data/db
+      - ./data/pdf-worker/storage:/data/storage
+    networks:
+      - qr-prototype-network
+    cpus: "1.0"
+    mem_limit: 768m
+    pids_limit: 64
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
   pdf-worker-tests:
     profiles: ["test"]

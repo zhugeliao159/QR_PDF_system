@@ -239,10 +239,12 @@ class AnswerRevisionService:
         database: Database,
         asset_service: AssetService,
         external_url_validator: ExternalUrlValidator | None = None,
+        require_preview_before_publish: bool = False,
     ) -> None:
         self.database = database
         self.asset_service = asset_service
         self.external_url_validator = external_url_validator
+        self.require_preview_before_publish = require_preview_before_publish
 
     def create_published(
         self,
@@ -495,6 +497,22 @@ class AnswerRevisionService:
             if target["asset_key"] is None:
                 raise AppError(503, "ASSET_MISSING", "answer asset does not exist")
             self._validate_asset(dict(target))
+            if self.require_preview_before_publish:
+                preview = connection.execute(
+                    """
+                    SELECT 1 FROM preview_sets
+                    WHERE revision_id = ? AND source_asset_id = ? AND source_sha256 = ?
+                      AND status = 'completed'
+                    LIMIT 1
+                    """,
+                    (revision_id, target["asset_id"], target["sha256"]),
+                ).fetchone()
+                if preview is None:
+                    raise AppError(
+                        409,
+                        "PREVIEW_REQUIRED",
+                        "必须先成功生成预览，才能发布这个文件版本。",
+                    )
         elif target["target_type"] == "external_url":
             if target["asset_id"] is not None or not target["external_url"]:
                 raise AppError(409, "VERSION_TARGET_INVALID", "external URL target is invalid")

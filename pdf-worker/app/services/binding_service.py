@@ -57,6 +57,7 @@ class BindingService:
         asset_service: AssetService | None = None,
         resolver_service: QrResolverService | None = None,
         external_url_validator: ExternalUrlValidator | None = None,
+        preview_service: Any | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
@@ -71,6 +72,16 @@ class BindingService:
             database, self.asset_service, self.external_url_validator
         )
         self.resolver_service = resolver_service or QrResolverService(database)
+        self.preview_service = preview_service
+
+    def _with_preview(self, version: dict[str, Any]) -> dict[str, Any]:
+        if self.preview_service is None:
+            return version
+        status = self.preview_service.status_for_revision(version["version_id"])
+        return {
+            **version,
+            "preview": status or {"status": "not_generated"},
+        }
 
     def _validate_binding_file(self, stored: StoredObject) -> StoredObject:
         path = self.storage.resolve(stored.relative_path)
@@ -271,7 +282,7 @@ class BindingService:
             "created_at": resolved.revision["created_at"],
             "is_pinned": pinned,
         }
-        current = self._version_out(version_row, row["version_id"])
+        current = self._with_preview(self._version_out(version_row, row["version_id"]))
         return {
             "qr_id": row["qr_id"],
             "qr_url": self.qr_service.qr_url(row["qr_id"]),
@@ -520,7 +531,7 @@ class BindingService:
         if revision["status"] != "draft":
             raise AppError(409, "VERSION_NOT_DRAFT", "version is not a draft")
         return {
-            **self._version_out(revision, binding["version_id"]),
+            **self._with_preview(self._version_out(revision, binding["version_id"])),
             "row_version": binding["row_version"],
             "qr_id": qr_id,
         }
@@ -585,7 +596,7 @@ class BindingService:
         revision = self.revision_service.get_by_key(binding["id"], revision_key)
         if revision["status"] != "published":
             raise AppError(409, "VERSION_NOT_PUBLISHED", "version is not published")
-        return self._version_out(revision, binding["version_id"])
+        return self._with_preview(self._version_out(revision, binding["version_id"]))
 
     def discard_draft(self, qr_id: str, revision_key: str, actor: str) -> None:
         binding = self._binding_row(qr_id, allow_inactive=True)
@@ -773,7 +784,10 @@ class BindingService:
     ) -> list[dict[str, Any]]:
         binding = self._binding_row(qr_id, allow_inactive)
         rows = self.revision_service.list(binding["id"])
-        return [self._version_out(row, binding["version_id"]) for row in rows]
+        return [
+            self._with_preview(self._version_out(row, binding["version_id"]))
+            for row in rows
+        ]
 
     def rollback(self, qr_id: str, version_id: int) -> dict[str, Any]:
         binding = self._binding_row(qr_id)
