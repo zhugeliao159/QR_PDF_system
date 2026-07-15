@@ -1,6 +1,6 @@
 # 练习册二维码管理系统
 
-这是一个面向机构管理员的内部原型：上传答案或讲解资料，生成动态或固定版本二维码，并把二维码添加到练习册 PDF。Stage 4A 已完成后端解耦，Stage 4B 新增了统一中文学生答案页和不可变版本内容入口。
+这是一个面向机构管理员的内部原型：上传答案或讲解资料，生成动态或固定版本二维码，并把二维码添加到练习册 PDF。Stage 4A 已完成后端解耦，Stage 4B 新增统一中文学生答案页，Stage 4C 新增草稿预览、显式发布、历史重新发布、并发保护和审计记录。
 
 ## 当前状态
 
@@ -9,7 +9,7 @@
 - QuickDrop：<http://127.0.0.1:18080>
 - 当前分支：`main`
 - 数据库 schema：`3`
-- 自动化测试：`72 passed, 0 failed, 0 skipped`
+- 自动化测试：`83 passed, 0 failed, 0 skipped`
 
 仓库默认配置只监听服务器 `127.0.0.1`。经用户确认，当前部署已临时切换为 `192.168.100.20:18081` 局域网测试模式；同一机构 Wi-Fi 内的手机可以扫码测试，但地址依赖当前网络，不得用于正式印刷。
 
@@ -29,9 +29,9 @@ ssh -L 18080:127.0.0.1:18080 tx
 
 1. “新建解析二维码”：填写名称、年级和学科，上传答案或讲解文件。
 2. “给练习册添加二维码”：选择已有资料，上传练习册 PDF，选择二维码方式、页码、大小和位置，预览后下载。
-3. “管理已有解析资料”：搜索资料、替换文件、恢复历史版本、编辑信息或停用资料。
+3. “管理已有解析资料”：搜索资料、新建答案草稿、预览并发布、重新发布历史版本、编辑信息或停用资料。
 
-动态二维码会跟随当前版本；固定二维码永久指向选定版本。详细步骤见 [管理员操作指南](docs/stage_03_admin_guide.md)。
+动态二维码只跟随“当前已发布答案”；保存草稿不会影响学生。固定二维码永久指向选定版本。详细步骤见 [管理员操作指南](docs/stage_03_admin_guide.md)。
 
 新生成的二维码使用 `/q/{token}`：扫码后直接进入中文答案页，PDF 会立即尝试内嵌显示。若手机浏览器不支持 PDF 预览，可使用页面上的“全屏打开”或“下载文件”。旧 `/r` 二维码仍然有效。
 
@@ -137,7 +137,7 @@ docker compose --profile test build pdf-worker-tests
 docker compose --profile test run --rm pdf-worker-tests
 ```
 
-Stage 4B 最终结果为 `72 passed, 0 failed, 0 skipped`。
+Stage 4C 最终结果为 `83 passed, 0 failed, 0 skipped`。
 
 ## 安全边界
 
@@ -162,8 +162,13 @@ Stage 4B 最终结果为 `72 passed, 0 failed, 0 skipped`。
 - [Stage 4B 缓存设计](docs/stage_04b_cache_design.md)
 - [Stage 4B 报告](docs/stage_04b_report.md)
 - [Stage 4B 交接](docs/handoff_stage_04b.md)
+- [Stage 4C 草稿与发布流程](docs/stage_04c_publish_workflow.md)
+- [Stage 4C 并发设计](docs/stage_04c_concurrency_design.md)
+- [Stage 4C 审计设计](docs/stage_04c_audit_design.md)
+- [Stage 4C 报告](docs/stage_04c_report.md)
+- [Stage 4C 交接](docs/handoff_stage_04c.md)
 - [第二阶段 API 说明](docs/stage_02_api.md)
 
 ## 当前未实现
 
-Stage 4C 的草稿发布、Stage 4D 的图片与受控外部 URL 尚未完成。多管理员和角色、审计查询界面、批量处理、扫码统计、学生账号、公网域名和 HTTPS、自动恢复、监控告警及高可用也仍未实现。
+Stage 4D 的图片与受控外部 URL 尚未完成。多管理员和角色、全局审计检索、批量处理、扫码统计、学生账号、公网域名和 HTTPS、自动恢复、监控告警及高可用也仍未实现。

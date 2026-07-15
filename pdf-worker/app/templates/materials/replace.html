@@ -1,1 +1,14 @@
-{% extends "base.html" %}{% block content %}<header class="page-heading"><div><p class="eyebrow">{{ material.display_code }}</p><h1>替换解析文件</h1></div></header><div class="notice warning">替换后，使用“自动更新到最新版”的二维码将打开新文件；使用“锁定当前版本”的二维码不会变化。</div><form method="post" enctype="multipart/form-data" class="form-layout narrow" data-submit-lock><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><section class="form-section"><label class="file-drop">选择新的解析文件<input type="file" name="file" required></label><label>更新说明<textarea name="note" maxlength="500" rows="3"></textarea></label></section><div class="form-actions"><a href="/admin/materials/{{ material.qr_id }}">取消</a><button class="primary" data-loading-text="正在替换……">确认替换</button></div></form>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<header class="page-heading"><div><p class="eyebrow">{{ material.display_code }}</p><h1>新建答案版本</h1><p class="muted">{{ material.title }}</p></div><a href="/admin/materials/{{ material.qr_id }}">返回资料详情</a></header>
+{% if error %}<div class="notice danger">{{ error }}</div>{% endif %}
+<div class="notice warning">新文件会先保存为草稿。预览并明确发布前，学生扫码仍会看到当前已发布答案。</div>
+<form method="post" enctype="multipart/form-data" class="form-layout narrow" data-submit-lock>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="form-section">
+    <label class="file-drop">选择新的答案文件<input type="file" name="file" required></label>
+    <label>版本说明（可选）<textarea name="note" maxlength="500" rows="3"></textarea></label>
+  </section>
+  <div class="form-actions"><a href="/admin/materials/{{ material.qr_id }}">取消</a><button class="primary" data-loading-text="正在保存草稿……">保存并预览草稿</button></div>
+</form>
+{% endblock %}

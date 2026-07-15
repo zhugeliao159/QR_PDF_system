@@ -47,6 +47,11 @@ def _csrf(request: Request, token: str | None) -> None:
         raise AppError(403, "CSRF_FAILED", "页面已过期，请刷新后重新操作。")
 
 
+def _actor(request: Request) -> str:
+    session = getattr(request.state, "admin", None)
+    return session.username if session is not None else "admin"
+
+
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     if getattr(request.state, "admin", None):
@@ -132,7 +137,7 @@ async def material_create(
     form = locals().copy()
     try:
         material = await request.app.state.binding_service.create_binding(
-            file, note, title, grade, subject, textbook_version, chapter
+            file, note, title, grade, subject, textbook_version, chapter, _actor(request)
         )
     except AppError as exc:
         return _render(
@@ -148,8 +153,15 @@ async def material_create(
 def material_detail(request: Request, qr_id: str, created: int = 0, updated: int = 0):
     material = request.app.state.binding_service.get_binding(qr_id, allow_inactive=True)
     versions = request.app.state.binding_service.list_versions(qr_id, allow_inactive=True)
+    drafts = [item for item in versions if item["status"] == "draft"]
+    history = [
+        item for item in versions
+        if item["status"] == "published" and not item["is_current"]
+    ]
+    events = request.app.state.binding_service.audit_events(qr_id)
     return _render(
-        request, "materials/detail.html", material=material, versions=versions,
+        request, "materials/detail.html", material=material, drafts=drafts,
+        history=history, events=events,
         success="创建成功" if created else ("资料已更新" if updated else ""),
     )
 
@@ -189,13 +201,98 @@ async def replace_file(
 ):
     _csrf(request, csrf_token)
     try:
-        await request.app.state.binding_service.replace_file(qr_id, file, note)
+        draft = await request.app.state.binding_service.create_draft(
+            qr_id, file, note, _actor(request)
+        )
     except AppError as exc:
         material = request.app.state.binding_service.get_binding(qr_id, allow_inactive=True)
         return _render(
             request, "materials/replace.html", status_code=exc.status_code,
             material=material, error=chinese_error(exc.code, exc.message),
         )
+    return RedirectResponse(
+        f"/admin/materials/{qr_id}/drafts/{draft['revision_key']}?created=1",
+        status_code=303,
+    )
+
+
+@router.get("/materials/{qr_id}/drafts/{revision_key}", response_class=HTMLResponse)
+def draft_preview(
+    request: Request, qr_id: str, revision_key: str, created: int = 0
+):
+    material = request.app.state.binding_service.get_binding(qr_id, allow_inactive=True)
+    draft = request.app.state.binding_service.draft_details(qr_id, revision_key)
+    return _render(
+        request,
+        "materials/draft.html",
+        material=material,
+        draft=draft,
+        success="草稿已保存，学生目前仍然看到原来的已发布版本。" if created else "",
+    )
+
+
+@router.get("/materials/{qr_id}/drafts/{revision_key}/file")
+def draft_preview_file(
+    request: Request,
+    qr_id: str,
+    revision_key: str,
+    download: bool = Query(False),
+):
+    path, filename, mime_type = request.app.state.binding_service.draft_file(
+        qr_id, revision_key
+    )
+    inline = not download and (
+        mime_type == "application/pdf" or mime_type.startswith("image/")
+    )
+    return download_response(
+        path,
+        filename,
+        mime_type,
+        "inline" if inline else "attachment",
+        "no-store, must-revalidate",
+    )
+
+
+@router.post("/materials/{qr_id}/drafts/{revision_key}/publish")
+def publish_draft(
+    request: Request,
+    qr_id: str,
+    revision_key: str,
+    csrf_token: str = Form(...),
+    page_state: int = Form(...),
+):
+    _csrf(request, csrf_token)
+    try:
+        request.app.state.binding_service.publish_draft(
+            qr_id, revision_key, page_state, _actor(request)
+        )
+    except AppError as exc:
+        material = request.app.state.binding_service.get_binding(
+            qr_id, allow_inactive=True
+        )
+        draft = request.app.state.binding_service.draft_details(qr_id, revision_key)
+        return _render(
+            request,
+            "materials/draft.html",
+            status_code=exc.status_code,
+            material=material,
+            draft=draft,
+            error=chinese_error(exc.code, exc.message),
+        )
+    return RedirectResponse(f"/admin/materials/{qr_id}?updated=1", status_code=303)
+
+
+@router.post("/materials/{qr_id}/drafts/{revision_key}/discard")
+def discard_draft(
+    request: Request,
+    qr_id: str,
+    revision_key: str,
+    csrf_token: str = Form(...),
+):
+    _csrf(request, csrf_token)
+    request.app.state.binding_service.discard_draft(
+        qr_id, revision_key, _actor(request)
+    )
     return RedirectResponse(f"/admin/materials/{qr_id}?updated=1", status_code=303)
 
 
@@ -204,6 +301,37 @@ def versions_page(request: Request, qr_id: str):
     material = request.app.state.binding_service.get_binding(qr_id, allow_inactive=True)
     versions = request.app.state.binding_service.list_versions(qr_id, allow_inactive=True)
     return _render(request, "materials/versions.html", material=material, versions=versions)
+
+
+@router.post("/materials/{qr_id}/versions/{revision_key}/republish")
+def republish_version(
+    request: Request,
+    qr_id: str,
+    revision_key: str,
+    csrf_token: str = Form(...),
+    page_state: int = Form(...),
+):
+    _csrf(request, csrf_token)
+    try:
+        request.app.state.binding_service.republish_revision(
+            qr_id, revision_key, page_state, _actor(request)
+        )
+    except AppError as exc:
+        material = request.app.state.binding_service.get_binding(
+            qr_id, allow_inactive=True
+        )
+        versions = request.app.state.binding_service.list_versions(
+            qr_id, allow_inactive=True
+        )
+        return _render(
+            request,
+            "materials/versions.html",
+            status_code=exc.status_code,
+            material=material,
+            versions=versions,
+            error=chinese_error(exc.code, exc.message),
+        )
+    return RedirectResponse(f"/admin/materials/{qr_id}?updated=1", status_code=303)
 
 
 @router.post("/materials/{qr_id}/restore/{version_id}")
@@ -239,7 +367,7 @@ def change_status(
     request: Request, qr_id: str, csrf_token: str = Form(...), active: int = Form(...)
 ):
     _csrf(request, csrf_token)
-    request.app.state.binding_service.set_active(qr_id, bool(active))
+    request.app.state.binding_service.set_active(qr_id, bool(active), _actor(request))
     return RedirectResponse(f"/admin/materials/{qr_id}", status_code=303)
 
 

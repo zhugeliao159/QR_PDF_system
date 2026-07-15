@@ -114,6 +114,9 @@ class BindingService:
             "is_current": row["id"] == current_revision_id,
             "note": row["change_note"],
             "is_pinned": bool(row.get("is_pinned", False)),
+            "revision_key": row["revision_key"],
+            "status": row["status"],
+            "published_at": row["published_at"],
         }
 
     @staticmethod
@@ -178,6 +181,7 @@ class BindingService:
             "is_active": 1 if resource["status"] == "active" else 0,
             "resource_key": resource["resource_key"],
             "revision_key": revision["revision_key"],
+            "row_version": resource["row_version"],
         }
 
     def _binding_row(self, qr_id: str, allow_inactive: bool = False) -> dict[str, Any]:
@@ -225,6 +229,7 @@ class BindingService:
             "subject": row["subject"],
             "textbook_version": row["textbook_version"],
             "chapter": row["chapter"],
+            "row_version": row["row_version"],
         }
 
     async def create_binding(
@@ -236,6 +241,7 @@ class BindingService:
         subject: str = "未分类",
         textbook_version: str | None = None,
         chapter: str | None = None,
+        actor: str = "legacy-api",
     ) -> dict[str, Any]:
         qr_id = uuid.uuid4().hex
         stored = await self.storage.save_binding_upload(
@@ -268,8 +274,13 @@ class BindingService:
                     note=metadata["note"],
                     created_at=now,
                 )
-                revision_id, _ = self.revision_service.create_published(
-                    connection, resource_id, stored, metadata["note"], now
+                draft = self.revision_service.create_draft(
+                    connection,
+                    resource_id,
+                    stored,
+                    metadata["note"],
+                    now,
+                    actor,
                 )
                 alias_cursor = connection.execute(
                     """
@@ -286,12 +297,36 @@ class BindingService:
                     INSERT INTO audit_events
                         (event_type, resource_id, revision_id, qr_alias_id,
                          actor, summary, created_at)
-                    VALUES ('create_resource', ?, ?, ?, 'legacy-api', ?, ?)
+                    VALUES ('create_resource', ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        resource_id, revision_id, int(alias_cursor.lastrowid),
+                        resource_id, draft["id"], int(alias_cursor.lastrowid), actor,
                         "通过兼容流程创建资料并立即发布首个版本", now,
                     ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO audit_events
+                        (event_type, resource_id, revision_id, qr_alias_id,
+                         actor, summary, created_at)
+                    VALUES ('create_qr_alias', ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        resource_id,
+                        draft["id"],
+                        int(alias_cursor.lastrowid),
+                        actor,
+                        "创建动态二维码入口",
+                        now,
+                    ),
+                )
+                self.revision_service.publish_in_connection(
+                    connection,
+                    resource_id,
+                    draft["id"],
+                    1,
+                    actor,
+                    "legacy_immediate_publish",
                 )
         except Exception:
             self.storage.delete(stored.relative_path)
@@ -301,7 +336,11 @@ class BindingService:
         return self.get_binding(qr_id)
 
     async def replace_file(
-        self, qr_id: str, upload: UploadFile, note: str | None = None
+        self,
+        qr_id: str,
+        upload: UploadFile,
+        note: str | None = None,
+        actor: str = "legacy-api",
     ) -> dict[str, Any]:
         binding = self._binding_row(qr_id)
         stored = await self.storage.save_binding_upload(
@@ -311,20 +350,18 @@ class BindingService:
             stored = self._validate_binding_file(stored)
             now = utc_now_iso()
             with self.database.transaction() as connection:
-                revision_id, version_number = self.revision_service.create_published(
-                    connection, binding["id"], stored, note, now
+                draft = self.revision_service.create_draft(
+                    connection, binding["id"], stored, note, now, actor
                 )
-                connection.execute(
-                    """
-                    INSERT INTO audit_events
-                        (event_type, resource_id, revision_id, actor, summary, created_at)
-                    VALUES ('legacy_immediate_publish', ?, ?, 'legacy-api', ?, ?)
-                    """,
-                    (
-                        binding["id"], revision_id,
-                        f"兼容替换流程立即发布第 {version_number} 版", now,
-                    ),
+                self.revision_service.publish_in_connection(
+                    connection,
+                    binding["id"],
+                    draft["id"],
+                    binding["row_version"],
+                    actor,
+                    "legacy_immediate_publish",
                 )
+                version_number = draft["revision_number"]
         except Exception:
             self.storage.delete(stored.relative_path)
             raise
@@ -334,6 +371,177 @@ class BindingService:
             "answer revision replaced public_token=%s version=%s", qr_id, version_number
         )
         return self.get_binding(qr_id)
+
+    async def create_draft(
+        self,
+        qr_id: str,
+        upload: UploadFile,
+        note: str | None,
+        actor: str,
+    ) -> dict[str, Any]:
+        binding = self._binding_row(qr_id)
+        stored = await self.storage.save_binding_upload(
+            upload, qr_id, self.settings.max_upload_size_bytes
+        )
+        try:
+            stored = self._validate_binding_file(stored)
+            now = utc_now_iso()
+            with self.database.transaction() as connection:
+                draft = self.revision_service.create_draft(
+                    connection, binding["id"], stored, note, now, actor
+                )
+        except Exception:
+            self.storage.delete(stored.relative_path)
+            raise
+        logger.info(
+            "answer draft created public_token=%s revision_number=%s",
+            qr_id,
+            draft["revision_number"],
+        )
+        return self.draft_details(qr_id, draft["revision_key"])
+
+    def draft_details(self, qr_id: str, revision_key: str) -> dict[str, Any]:
+        binding = self._binding_row(qr_id, allow_inactive=True)
+        revision = self.revision_service.get_by_key(binding["id"], revision_key)
+        if revision["status"] != "draft":
+            raise AppError(409, "VERSION_NOT_DRAFT", "version is not a draft")
+        return {
+            **self._version_out(revision, binding["version_id"]),
+            "row_version": binding["row_version"],
+            "qr_id": qr_id,
+        }
+
+    def draft_file(self, qr_id: str, revision_key: str) -> tuple[Path, str, str]:
+        binding = self._binding_row(qr_id, allow_inactive=True)
+        revision = self.revision_service.get_by_key(binding["id"], revision_key)
+        if revision["status"] != "draft":
+            raise AppError(409, "VERSION_NOT_DRAFT", "version is not a draft")
+        return (
+            self.storage.resolve(revision["storage_key"]),
+            revision["original_filename"],
+            revision["mime_type"],
+        )
+
+    def publish_draft(
+        self,
+        qr_id: str,
+        revision_key: str,
+        expected_row_version: int,
+        actor: str,
+    ) -> dict[str, Any]:
+        binding = self._binding_row(qr_id, allow_inactive=True)
+        revision = self.revision_service.get_by_key(binding["id"], revision_key)
+        self.revision_service.publish(
+            binding["id"], revision["id"], expected_row_version, actor
+        )
+        logger.info(
+            "answer draft published public_token=%s revision_number=%s",
+            qr_id,
+            revision["revision_number"],
+        )
+        return self.get_binding(qr_id, allow_inactive=True)
+
+    def republish_revision(
+        self,
+        qr_id: str,
+        revision_key: str,
+        expected_row_version: int,
+        actor: str,
+    ) -> dict[str, Any]:
+        binding = self._binding_row(qr_id, allow_inactive=True)
+        revision = self.revision_service.get_by_key(binding["id"], revision_key)
+        self.revision_service.publish(
+            binding["id"],
+            revision["id"],
+            expected_row_version,
+            actor,
+            republish=True,
+        )
+        logger.info(
+            "answer revision republished public_token=%s revision_number=%s",
+            qr_id,
+            revision["revision_number"],
+        )
+        return self.get_binding(qr_id, allow_inactive=True)
+
+    def discard_draft(self, qr_id: str, revision_key: str, actor: str) -> None:
+        binding = self._binding_row(qr_id, allow_inactive=True)
+        candidate = self.revision_service.get_by_key(binding["id"], revision_key)
+        trash_path: str | None = None
+        delete_asset = False
+        try:
+            with self.database.transaction() as connection:
+                revision = connection.execute(
+                    """
+                    SELECT v.*, a.storage_key
+                    FROM answer_revisions v
+                    JOIN assets a ON a.id = v.asset_id
+                    WHERE v.resource_id = ? AND v.revision_key = ?
+                    """,
+                    (binding["id"], revision_key),
+                ).fetchone()
+                if revision is None:
+                    raise AppError(404, "VERSION_NOT_FOUND", "version does not exist")
+                if revision["status"] != "draft":
+                    raise AppError(409, "VERSION_NOT_DRAFT", "version is not a draft")
+                resource = connection.execute(
+                    "SELECT current_published_revision_id FROM answer_resources WHERE id = ?",
+                    (binding["id"],),
+                ).fetchone()
+                if resource["current_published_revision_id"] == revision["id"]:
+                    raise AppError(409, "CURRENT_VERSION_PROTECTED", "current version cannot be discarded")
+                if connection.execute(
+                    "SELECT 1 FROM revision_references WHERE revision_id = ? LIMIT 1",
+                    (revision["id"],),
+                ).fetchone():
+                    raise AppError(409, "VERSION_REFERENCED", "referenced version cannot be discarded")
+                reference_count = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM answer_revisions WHERE asset_id = ?",
+                        (revision["asset_id"],),
+                    ).fetchone()[0]
+                )
+                delete_asset = reference_count == 1
+                if delete_asset:
+                    trash_path = self.storage.move_to_trash(revision["storage_key"])
+                connection.execute(
+                    """
+                    INSERT INTO audit_events
+                        (event_type, resource_id, revision_id, actor, summary, created_at)
+                    VALUES ('discard_draft', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        binding["id"],
+                        revision["id"],
+                        actor,
+                        f"放弃第 {revision['revision_number']} 版答案草稿",
+                        utc_now_iso(),
+                    ),
+                )
+                connection.execute(
+                    "DELETE FROM answer_revisions WHERE id = ?", (revision["id"],)
+                )
+                if delete_asset:
+                    connection.execute(
+                        "DELETE FROM assets WHERE id = ?", (revision["asset_id"],)
+                    )
+        except Exception:
+            if trash_path is not None:
+                self.storage.restore_from_trash(trash_path, candidate["storage_key"])
+            raise
+        if trash_path is not None:
+            try:
+                self.storage.delete(trash_path)
+            except Exception:
+                logger.exception(
+                    "discarded draft left trash asset resource_id=%s revision_key=%s",
+                    binding["id"],
+                    revision_key,
+                )
+
+    def audit_events(self, qr_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        binding = self._binding_row(qr_id, allow_inactive=True)
+        return self.revision_service.audit_events(binding["id"], limit)
 
     def _cleanup_old_versions(self, resource_id: int) -> None:
         while True:
@@ -348,7 +556,7 @@ class BindingService:
                     connection.execute(
                         """
                         SELECT COUNT(*) FROM answer_revisions v
-                        WHERE v.resource_id = ? AND NOT EXISTS (
+                        WHERE v.resource_id = ? AND v.status = 'published' AND NOT EXISTS (
                             SELECT 1 FROM revision_references r
                             WHERE r.revision_id = v.id
                         )
@@ -363,7 +571,7 @@ class BindingService:
                     SELECT v.id, v.asset_id, a.storage_key
                     FROM answer_revisions v
                     JOIN assets a ON a.id = v.asset_id
-                    WHERE v.resource_id = ? AND v.id != ? AND NOT EXISTS (
+                    WHERE v.resource_id = ? AND v.status = 'published' AND v.id != ? AND NOT EXISTS (
                         SELECT 1 FROM revision_references r
                         WHERE r.revision_id = v.id
                     )
@@ -444,7 +652,19 @@ class BindingService:
 
     def rollback(self, qr_id: str, version_id: int) -> dict[str, Any]:
         binding = self._binding_row(qr_id)
-        self.revision_service.switch_current(binding["id"], version_id)
+        with self.database.read() as connection:
+            revision = connection.execute(
+                "SELECT revision_key FROM answer_revisions WHERE id = ? AND resource_id = ?",
+                (version_id, binding["id"]),
+            ).fetchone()
+        if revision is None:
+            raise AppError(404, "VERSION_NOT_FOUND", "version does not exist")
+        self.republish_revision(
+            qr_id,
+            revision["revision_key"],
+            binding["row_version"],
+            "legacy-api",
+        )
         with self.database.transaction() as connection:
             connection.execute(
                 """
@@ -540,7 +760,9 @@ class BindingService:
         self.resource_service.update_metadata(binding["id"], metadata)
         return self.get_binding(qr_id)
 
-    def set_active(self, qr_id: str, active: bool) -> dict[str, Any]:
+    def set_active(
+        self, qr_id: str, active: bool, actor: str = "legacy-api"
+    ) -> dict[str, Any]:
         resolved = self.resolver_service.resolve_latest(qr_id, allow_inactive=True)
-        self.resource_service.set_active(resolved.resource["id"], active)
+        self.resource_service.set_active(resolved.resource["id"], active, actor)
         return self.get_binding(qr_id) if active else {"qr_id": qr_id, "is_active": False}

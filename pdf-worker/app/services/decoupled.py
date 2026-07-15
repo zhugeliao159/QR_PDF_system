@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -197,7 +198,7 @@ class AnswerResourceService:
             if result.rowcount != 1:
                 raise AppError(404, "RESOURCE_NOT_FOUND", "answer resource does not exist")
 
-    def set_active(self, resource_id: int, active: bool) -> None:
+    def set_active(self, resource_id: int, active: bool, actor: str = "legacy-api") -> None:
         status = "active" if active else "inactive"
         now = utc_now_iso()
         with self.database.transaction() as connection:
@@ -214,6 +215,20 @@ class AnswerResourceService:
             connection.execute(
                 "UPDATE qr_aliases SET status = ?, updated_at = ? WHERE resource_id = ?",
                 (status, now, resource_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO audit_events
+                    (event_type, resource_id, actor, summary, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    "activate_resource" if active else "deactivate_resource",
+                    resource_id,
+                    actor,
+                    "重新启用资料" if active else "停用资料",
+                    now,
+                ),
             )
 
 
@@ -269,6 +284,229 @@ class AnswerRevisionService:
             (revision_id, created_at, resource_id),
         )
         return revision_id, version_number
+
+    def create_draft(
+        self,
+        connection: sqlite3.Connection,
+        resource_id: int,
+        stored: StoredObject,
+        note: str | None,
+        created_at: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        resource = connection.execute(
+            "SELECT id, status FROM answer_resources WHERE id = ?", (resource_id,)
+        ).fetchone()
+        if resource is None:
+            raise AppError(404, "RESOURCE_NOT_FOUND", "answer resource does not exist")
+        if resource["status"] != "active":
+            raise AppError(410, "RESOURCE_INACTIVE", "answer resource is inactive")
+        revision_number = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(revision_number), 0) + 1 "
+                "FROM answer_revisions WHERE resource_id = ?",
+                (resource_id,),
+            ).fetchone()[0]
+        )
+        asset_id = self.asset_service.create(connection, stored, created_at)
+        revision_key = new_public_key()
+        cursor = connection.execute(
+            """
+            INSERT INTO answer_revisions
+                (revision_key, resource_id, revision_number, target_type,
+                 asset_id, external_url, status, change_note,
+                 created_at, published_at)
+            VALUES (?, ?, ?, 'file', ?, NULL, 'draft', ?, ?, NULL)
+            """,
+            (revision_key, resource_id, revision_number, asset_id, note, created_at),
+        )
+        revision_id = int(cursor.lastrowid)
+        connection.execute(
+            """
+            INSERT INTO audit_events
+                (event_type, resource_id, revision_id, actor, summary, created_at)
+            VALUES ('create_draft', ?, ?, ?, ?, ?)
+            """,
+            (
+                resource_id,
+                revision_id,
+                actor,
+                f"创建第 {revision_number} 版答案草稿",
+                created_at,
+            ),
+        )
+        return {
+            "id": revision_id,
+            "revision_key": revision_key,
+            "revision_number": revision_number,
+            "asset_id": asset_id,
+        }
+
+    def get_by_key(self, resource_id: int, revision_key: str) -> dict[str, Any]:
+        with self.database.read() as connection:
+            row = connection.execute(
+                """
+                SELECT v.*, a.asset_key, a.storage_backend, a.storage_key,
+                       a.original_filename, a.mime_type, a.size_bytes, a.sha256
+                FROM answer_revisions v
+                JOIN assets a ON a.id = v.asset_id
+                WHERE v.resource_id = ? AND v.revision_key = ?
+                """,
+                (resource_id, revision_key),
+            ).fetchone()
+        if row is None:
+            raise AppError(404, "VERSION_NOT_FOUND", "version does not exist")
+        return dict(row)
+
+    def _validate_asset(self, asset: dict[str, Any]) -> None:
+        try:
+            path = self.asset_service.path(asset)
+        except AppError as exc:
+            if exc.code == "STORED_FILE_MISSING":
+                raise AppError(503, "ASSET_MISSING", "answer asset is unavailable") from exc
+            raise
+        if path.stat().st_size != asset["size_bytes"]:
+            raise AppError(409, "ASSET_SIZE_MISMATCH", "answer asset size has changed")
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+        if digest.hexdigest() != asset["sha256"]:
+            raise AppError(409, "ASSET_HASH_MISMATCH", "answer asset content has changed")
+
+    def publish_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        resource_id: int,
+        revision_id: int,
+        expected_row_version: int,
+        actor: str,
+        event_type: str,
+    ) -> int:
+        if event_type not in {
+            "publish_revision",
+            "republish_revision",
+            "legacy_immediate_publish",
+        }:
+            raise ValueError("unsupported publish event type")
+        resource = connection.execute(
+            "SELECT id, status, row_version FROM answer_resources WHERE id = ?",
+            (resource_id,),
+        ).fetchone()
+        if resource is None:
+            raise AppError(404, "RESOURCE_NOT_FOUND", "answer resource does not exist")
+        if resource["status"] != "active":
+            raise AppError(410, "RESOURCE_INACTIVE", "answer resource is inactive")
+        if resource["row_version"] != expected_row_version:
+            raise AppError(
+                409,
+                "RESOURCE_CONFLICT",
+                "这份资料刚刚被其他管理员更新，请刷新页面后重试。",
+            )
+        target = connection.execute(
+            """
+            SELECT v.*, a.asset_key, a.storage_backend, a.storage_key,
+                   a.original_filename, a.mime_type, a.size_bytes, a.sha256
+            FROM answer_revisions v
+            LEFT JOIN assets a ON a.id = v.asset_id
+            WHERE v.id = ? AND v.resource_id = ?
+            """,
+            (revision_id, resource_id),
+        ).fetchone()
+        if target is None:
+            raise AppError(404, "VERSION_NOT_FOUND", "version does not exist")
+        required_status = "published" if event_type == "republish_revision" else "draft"
+        if target["status"] != required_status:
+            raise AppError(
+                409,
+                "VERSION_STATUS_INVALID",
+                "当前答案版本状态已经变化，请刷新页面后重试。",
+            )
+        if target["target_type"] != "file" or target["asset_id"] is None:
+            raise AppError(409, "VERSION_TARGET_UNSUPPORTED", "version target is unsupported")
+        if target["asset_key"] is None:
+            raise AppError(503, "ASSET_MISSING", "answer asset does not exist")
+        self._validate_asset(dict(target))
+
+        now = utc_now_iso()
+        result = connection.execute(
+            """
+            UPDATE answer_resources
+            SET current_published_revision_id = ?, row_version = row_version + 1,
+                updated_at = ?
+            WHERE id = ? AND row_version = ?
+            """,
+            (revision_id, now, resource_id, expected_row_version),
+        )
+        if result.rowcount != 1:
+            raise AppError(
+                409,
+                "RESOURCE_CONFLICT",
+                "这份资料刚刚被其他管理员更新，请刷新页面后重试。",
+            )
+        if target["status"] == "draft":
+            connection.execute(
+                """
+                UPDATE answer_revisions
+                SET status = 'published', published_at = ?
+                WHERE id = ? AND status = 'draft'
+                """,
+                (now, revision_id),
+            )
+        event_names = {
+            "publish_revision": "发布",
+            "republish_revision": "重新发布",
+            "legacy_immediate_publish": "通过兼容接口立即发布",
+        }
+        connection.execute(
+            """
+            INSERT INTO audit_events
+                (event_type, resource_id, revision_id, actor, summary, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_type,
+                resource_id,
+                revision_id,
+                actor,
+                f"{event_names[event_type]}第 {target['revision_number']} 版答案",
+                now,
+            ),
+        )
+        return expected_row_version + 1
+
+    def publish(
+        self,
+        resource_id: int,
+        revision_id: int,
+        expected_row_version: int,
+        actor: str,
+        *,
+        republish: bool = False,
+    ) -> int:
+        with self.database.transaction() as connection:
+            return self.publish_in_connection(
+                connection,
+                resource_id,
+                revision_id,
+                expected_row_version,
+                actor,
+                "republish_revision" if republish else "publish_revision",
+            )
+
+    def audit_events(self, resource_id: int, limit: int = 50) -> list[dict[str, Any]]:
+        with self.database.read() as connection:
+            rows = connection.execute(
+                """
+                SELECT event_type, actor, summary, created_at
+                FROM audit_events
+                WHERE resource_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (resource_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def list(self, resource_id: int) -> list[dict[str, Any]]:
         with self.database.read() as connection:
