@@ -9,8 +9,8 @@
   <button type="submit">搜索</button>
 </form>
 {% if materials %}
-<div class="table-wrap"><table><thead><tr><th>资料名称</th><th>资料编号</th><th>年级 / 学科</th><th>当前解析文件</th><th>更新时间</th><th>状态</th><th>操作</th></tr></thead><tbody>
-{% for item in materials %}<tr><td><strong>{{ item.title }}</strong></td><td>{{ item.display_code }}</td><td>{{ item.grade }} / {{ item.subject }}</td><td class="filename">{{ item.original_filename }}</td><td>{{ item.updated_at[:10] }}</td><td><span class="status-tag {% if item.is_active %}success{% else %}muted-tag{% endif %}">{% if item.is_active %}正常{% else %}已停用{% endif %}</span></td><td><div class="row-actions"><a href="/admin/materials/{{ item.qr_id }}">查看</a><a href="/admin/pdf/new?material={{ item.qr_id }}">添加到练习册</a><a href="/admin/materials/{{ item.qr_id }}/replace">新建答案版本</a></div></td></tr>{% endfor %}
+<div class="table-wrap"><table><thead><tr><th>资料名称</th><th>资料编号</th><th>年级 / 学科</th><th>当前答案</th><th>更新时间</th><th>状态</th><th>操作</th></tr></thead><tbody>
+{% for item in materials %}<tr><td><strong>{{ item.title }}</strong></td><td>{{ item.display_code }}</td><td>{{ item.grade }} / {{ item.subject }}</td><td class="filename">{% if item.target_type == 'external_url' %}外部网页{% else %}{{ item.original_filename }}{% endif %}</td><td>{{ item.updated_at[:10] }}</td><td><span class="status-tag {% if item.is_active %}success{% else %}muted-tag{% endif %}">{% if item.is_active %}正常{% else %}已停用{% endif %}</span></td><td><div class="row-actions"><a href="/admin/materials/{{ item.qr_id }}">查看</a><a href="/admin/pdf/new?material={{ item.qr_id }}">添加到练习册</a><a href="/admin/materials/{{ item.qr_id }}/replace">新建答案版本</a></div></td></tr>{% endfor %}
 </tbody></table></div>
 <nav class="pagination">{% if page > 1 %}<a href="?q={{ q }}&grade={{ grade }}&subject={{ subject }}&status={{ status }}&page={{ page-1 }}">上一页</a>{% endif %}<span>第 {{ page }} / {{ pages }} 页</span>{% if page < pages %}<a href="?q={{ q }}&grade={{ grade }}&subject={{ subject }}&status={{ status }}&page={{ page+1 }}">下一页</a>{% endif %}</nav>
 {% else %}<div class="empty-state"><h2>没有找到符合条件的解析资料</h2><p>可以调整搜索条件，或新建一份解析资料。</p></div>{% endif %}

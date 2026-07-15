@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from urllib.parse import urlsplit
 
 from app.errors import AppError
 from app.responses import download_response
@@ -16,6 +17,7 @@ def _student_view(resolved) -> dict:
     resource = resolved.resource
     revision = resolved.revision
     asset = resolved.asset
+    content_kind = revision["content_kind"]
     return {
         "resource_name": resource["name"],
         "display_code": resource["display_code"],
@@ -24,10 +26,15 @@ def _student_view(resolved) -> dict:
         "chapter": resource["chapter"],
         "revision_number": revision["revision_number"],
         "updated_at": revision["published_at"] or revision["created_at"],
-        "content_type": "pdf" if asset["mime_type"] == "application/pdf" else "file",
-        "original_filename": asset["original_filename"],
-        "mime_type": asset["mime_type"],
-        "size_bytes": asset["size_bytes"],
+        "content_type": content_kind,
+        "original_filename": asset["original_filename"] if asset else None,
+        "mime_type": asset["mime_type"] if asset else None,
+        "size_bytes": asset["size_bytes"] if asset else None,
+        "external_host": (
+            (urlsplit(revision["external_url"]).hostname or "外部网站")
+            if revision["target_type"] == "external_url"
+            else None
+        ),
     }
 
 
@@ -55,6 +62,20 @@ def answer_content(
     download: bool = Query(False),
 ) -> RedirectResponse:
     resolved = request.app.state.resolver_service.resolve_latest(public_token)
+    if resolved.revision["target_type"] == "external_url":
+        validated = request.app.state.external_url_validator.validate(
+            resolved.revision["external_url"]
+        )
+        return RedirectResponse(
+            validated.url,
+            status_code=307,
+            headers={
+                "Cache-Control": DYNAMIC_CACHE,
+                "X-Content-Type-Options": "nosniff",
+                "Referrer-Policy": "no-referrer",
+                "Content-Security-Policy": "default-src 'none'",
+            },
+        )
     target = f"/content/{resolved.revision['revision_key']}"
     if download:
         target += "?download=true"

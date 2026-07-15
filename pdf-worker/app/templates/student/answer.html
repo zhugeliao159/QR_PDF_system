@@ -34,6 +34,17 @@
           <a class="primary-action" data-content-link href="#">打开解析文件</a>
         </div>
       </object>
+      {% elif answer.content_type == 'image' %}
+      <a class="image-link" data-content-link href="#" target="_blank" rel="noopener">
+        <img class="answer-image" data-student-image alt="{{ answer.resource_name }} 答案图片">
+      </a>
+      {% elif answer.content_type == 'external_url' %}
+      <div class="external-notice">
+        <p class="source-label">此解析内容由外部网站提供</p>
+        <h2>{{ answer.external_host }}</h2>
+        <p>外部网页可能被对方修改、关闭或加入广告。请确认域名后再打开。</p>
+        <a class="primary-action" data-content-link href="#" target="_blank" rel="noopener noreferrer">打开外部解析</a>
+      </div>
       {% else %}
       <div class="file-fallback">
         <h2>解析文件已准备好</h2>
@@ -43,10 +54,10 @@
       {% endif %}
     </section>
 
-    <nav class="answer-actions" aria-label="文件操作">
+    {% if answer.content_type != 'external_url' %}<nav class="answer-actions" aria-label="文件操作">
       <a class="primary-action" data-content-link href="#" target="_blank" rel="noopener">全屏打开</a>
-      <a class="secondary-action" data-download-link href="#">下载文件</a>
-    </nav>
+      <a class="secondary-action" data-download-link href="#">{% if answer.content_type == 'image' %}下载图片{% else %}下载文件{% endif %}</a>
+    </nav>{% endif %}
     <p class="network-note">如果内容暂时无法显示，请检查网络后刷新页面，或使用“全屏打开”。</p>
   </main>
 </body>

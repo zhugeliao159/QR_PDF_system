@@ -30,6 +30,8 @@ def _context(request: Request, **values: Any) -> dict[str, Any]:
         "network": classify_public_url(settings.public_base_url),
         "grades": sorted(GRADES, key=lambda item: (item != "未分类", item)),
         "subjects": sorted(SUBJECTS, key=lambda item: (item != "未分类", item)),
+        "allow_external_urls": settings.allow_external_urls,
+        "allow_private_http_external_urls": settings.allow_private_http_external_urls,
     }
     context.update(values)
     return context
@@ -197,13 +199,21 @@ def replace_page(request: Request, qr_id: str):
 @router.post("/materials/{qr_id}/replace")
 async def replace_file(
     request: Request, qr_id: str, csrf_token: str = Form(...),
-    note: str = Form(""), file: UploadFile = File(...),
+    note: str = Form(""), content_type: str = Form("file"),
+    external_url: str = Form(""), file: UploadFile | None = File(None),
 ):
     _csrf(request, csrf_token)
     try:
-        draft = await request.app.state.binding_service.create_draft(
-            qr_id, file, note, _actor(request)
-        )
+        if content_type == "external_url":
+            draft = request.app.state.binding_service.create_external_draft(
+                qr_id, external_url, note, _actor(request)
+            )
+        else:
+            if file is None:
+                raise AppError(422, "FILE_REQUIRED", "answer file is required")
+            draft = await request.app.state.binding_service.create_draft(
+                qr_id, file, note, _actor(request), content_type
+            )
     except AppError as exc:
         material = request.app.state.binding_service.get_binding(qr_id, allow_inactive=True)
         return _render(
@@ -260,9 +270,17 @@ def publish_draft(
     revision_key: str,
     csrf_token: str = Form(...),
     page_state: int = Form(...),
+    external_confirm: str = Form(""),
 ):
     _csrf(request, csrf_token)
     try:
+        draft = request.app.state.binding_service.draft_details(qr_id, revision_key)
+        if draft["target_type"] == "external_url" and external_confirm != "yes":
+            raise AppError(
+                422,
+                "EXTERNAL_URL_CONFIRM_REQUIRED",
+                "请确认该网址内容适合学生访问。",
+            )
         request.app.state.binding_service.publish_draft(
             qr_id, revision_key, page_state, _actor(request)
         )
@@ -310,9 +328,19 @@ def republish_version(
     revision_key: str,
     csrf_token: str = Form(...),
     page_state: int = Form(...),
+    external_confirm: str = Form(""),
 ):
     _csrf(request, csrf_token)
     try:
+        version = request.app.state.binding_service.published_revision(
+            qr_id, revision_key
+        )
+        if version["target_type"] == "external_url" and external_confirm != "yes":
+            raise AppError(
+                422,
+                "EXTERNAL_URL_CONFIRM_REQUIRED",
+                "请确认该网址内容适合学生访问。",
+            )
         request.app.state.binding_service.republish_revision(
             qr_id, revision_key, page_state, _actor(request)
         )
@@ -332,6 +360,25 @@ def republish_version(
             error=chinese_error(exc.code, exc.message),
         )
     return RedirectResponse(f"/admin/materials/{qr_id}?updated=1", status_code=303)
+
+
+@router.get("/materials/{qr_id}/versions/{revision_key}/open")
+def open_published_version(request: Request, qr_id: str, revision_key: str):
+    version = request.app.state.binding_service.published_revision(
+        qr_id, revision_key
+    )
+    if version["target_type"] == "external_url":
+        validated = request.app.state.external_url_validator.validate(
+            version["external_url"]
+        )
+        target = validated.url
+    else:
+        target = f"/content/{revision_key}"
+    return RedirectResponse(
+        target,
+        status_code=307,
+        headers={"Cache-Control": "no-store, must-revalidate", "Referrer-Policy": "no-referrer"},
+    )
 
 
 @router.post("/materials/{qr_id}/restore/{version_id}")

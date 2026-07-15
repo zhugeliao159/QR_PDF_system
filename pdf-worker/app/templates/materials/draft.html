@@ -4,18 +4,34 @@
 {% if success %}<div class="notice success">{{ success }}</div>{% endif %}
 {% if error %}<div class="notice danger">{{ error }}</div>{% endif %}
 <div class="notice warning">此草稿尚未发布，学生扫码不会看到它。</div>
+
+{% if draft.content_kind == 'external_url' %}
+<section class="external-draft">
+  <p class="eyebrow">此版本将打开外部网页</p>
+  <h2>{{ draft.external_host }}</h2>
+  <p>系统不会抓取或嵌入这个网页。请在新窗口中核对内容、域名和学生访问权限。</p>
+  <a class="primary button-link" href="{{ draft.external_url }}" target="_blank" rel="noopener noreferrer">在新窗口中测试打开</a>
+  <div class="notice warning">外部网页可能被对方修改、关闭或加入广告。系统只能保存链接，无法保证外部内容长期可用。</div>
+  {% if draft.external_url.startswith('http://') %}<div class="notice danger">该外部地址仅适用于受控局域网测试，学生离开该网络后可能无法访问。</div>{% endif %}
+  <details class="technical"><summary>网址信息</summary><dl><dt>完整网址</dt><dd>{{ draft.external_url }}</dd><dt>连接方式</dt><dd>{% if draft.external_url.startswith('https://') %}HTTPS{% else %}HTTP 局域网测试{% endif %}</dd></dl></details>
+</section>
+{% else %}
 <section class="draft-summary">
   <dl class="info-list"><div><dt>文件名</dt><dd>{{ draft.original_filename }}</dd></div><div><dt>文件大小</dt><dd>{{ (draft.size_bytes / 1024)|round(1) }} KB</dd></div><div><dt>创建时间</dt><dd>{{ draft.created_at }}</dd></div><div><dt>版本说明</dt><dd>{{ draft.note or '无' }}</dd></div></dl>
-  <a class="secondary button-link" href="/admin/materials/{{ material.qr_id }}/drafts/{{ draft.revision_key }}/file?download=true">下载草稿</a>
+  <a class="secondary button-link" href="/admin/materials/{{ material.qr_id }}/drafts/{{ draft.revision_key }}/file?download=true">{% if draft.content_kind == 'image' %}下载图片{% else %}下载草稿{% endif %}</a>
 </section>
-{% if draft.mime_type == 'application/pdf' %}
+{% if draft.content_kind == 'pdf' %}
 <object class="draft-preview" data="/admin/materials/{{ material.qr_id }}/drafts/{{ draft.revision_key }}/file" type="application/pdf"><p>当前浏览器无法内嵌预览，请使用上方按钮下载草稿查看。</p></object>
-{% elif draft.mime_type.startswith('image/') %}
-<div class="draft-image"><img src="/admin/materials/{{ material.qr_id }}/drafts/{{ draft.revision_key }}/file" alt="草稿预览"></div>
+{% elif draft.content_kind == 'image' %}
+<div class="draft-image"><img src="/admin/materials/{{ material.qr_id }}/drafts/{{ draft.revision_key }}/file" alt="{{ material.title }} 答案图片草稿"></div>
 {% else %}<div class="empty-state">此文件类型不支持网页内预览，请下载后检查。</div>{% endif %}
+{% endif %}
+
 <div class="publish-actions">
   <form method="post" action="/admin/materials/{{ material.qr_id }}/drafts/{{ draft.revision_key }}/publish" data-confirm="发布后，使用‘自动更新到最新发布答案’的二维码将立即显示这个版本。锁定版本二维码不受影响。">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="page_state" value="{{ draft.row_version }}"><button class="primary" type="submit">发布此版本</button>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="page_state" value="{{ draft.row_version }}">
+    {% if draft.content_kind == 'external_url' %}<label class="confirm-check"><input type="checkbox" name="external_confirm" value="yes" required>我已确认该网址内容适合学生访问</label>{% endif %}
+    <button class="primary" type="submit">发布此版本</button>
   </form>
   <form method="post" action="/admin/materials/{{ material.qr_id }}/drafts/{{ draft.revision_key }}/discard" data-confirm="确认放弃这份草稿吗？放弃后无法恢复。">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger-button" type="submit">放弃草稿</button>

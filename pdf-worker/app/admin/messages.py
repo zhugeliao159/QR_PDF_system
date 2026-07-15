@@ -14,6 +14,23 @@ ERROR_MESSAGES = {
     "ASSET_MISSING": "答案文件不存在，无法发布，请重新上传或联系技术人员。",
     "ASSET_SIZE_MISMATCH": "答案文件完整性检查失败，无法发布。",
     "ASSET_HASH_MISMATCH": "答案文件完整性检查失败，无法发布。",
+    "FILE_REQUIRED": "请选择要上传的答案文件。",
+    "PDF_REQUIRED": "所选文件不是有效 PDF，请重新选择。",
+    "IMAGE_REQUIRED": "请选择 PNG、JPEG 或 WebP 图片。",
+    "INVALID_IMAGE_FILE": "图片无法打开或已经损坏，请重新选择。",
+    "UNSUPPORTED_IMAGE_FORMAT": "当前只支持 PNG、JPEG 和 WebP 图片。",
+    "IMAGE_PIXELS_EXCEEDED": "图片像素过大，请缩小尺寸后重新上传。",
+    "EXTERNAL_URLS_DISABLED": "外部网页功能当前未启用。",
+    "EXTERNAL_URL_INVALID": "网址格式不正确，请检查后重试。",
+    "EXTERNAL_URL_ABSOLUTE_REQUIRED": "请输入以 https:// 开头的完整网址。",
+    "EXTERNAL_URL_SCHEME_BLOCKED": "该网址协议不安全，只允许受控的 HTTP 或 HTTPS 地址。",
+    "EXTERNAL_URL_CREDENTIALS_BLOCKED": "网址不能包含用户名或密码。",
+    "EXTERNAL_URL_HOST_BLOCKED": "该网站域名不允许使用。",
+    "EXTERNAL_URL_HOST_NOT_ALLOWED": "该网站不在允许域名列表中。",
+    "EXTERNAL_URL_HTTPS_REQUIRED": "外部网页必须使用 HTTPS。",
+    "EXTERNAL_URL_ADDRESS_BLOCKED": "该网址指向本机、内网或其他受限地址，不能使用。",
+    "EXTERNAL_URL_DNS_FAILED": "无法确认该网站的网络地址，请检查域名后重试。",
+    "EXTERNAL_URL_CONFIRM_REQUIRED": "请确认该网址内容适合学生访问。",
 }
 
 

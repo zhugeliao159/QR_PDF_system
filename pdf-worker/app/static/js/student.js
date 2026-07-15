@@ -9,4 +9,6 @@
   });
   const viewer = document.querySelector("[data-student-content]");
   if (viewer) viewer.data = contentUrl;
+  const image = document.querySelector("[data-student-image]");
+  if (image) image.src = contentUrl;
 })();

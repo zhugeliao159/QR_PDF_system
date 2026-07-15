@@ -37,6 +37,15 @@ def _env_bool(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be true or false")
 
 
+def _env_hosts(name: str) -> tuple[str, ...]:
+    values = []
+    for item in os.getenv(name, "").split(","):
+        value = item.strip().lower().rstrip(".")
+        if value:
+            values.append(value)
+    return tuple(dict.fromkeys(values))
+
+
 @dataclass(frozen=True)
 class Settings:
     public_base_url: str
@@ -57,6 +66,13 @@ class Settings:
     session_cookie_secure: bool = False
     session_max_age_seconds: int = 28800
     enable_admin_api_docs: bool = False
+    max_image_size_mb: int = 30
+    max_image_pixels: int = 40_000_000
+    allow_external_urls: bool = False
+    allow_private_http_external_urls: bool = False
+    external_url_allowed_hosts: tuple[str, ...] = ()
+    external_url_blocked_hosts: tuple[str, ...] = ()
+    external_url_require_https: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -94,6 +110,17 @@ class Settings:
             session_cookie_secure=_env_bool("SESSION_COOKIE_SECURE", False),
             session_max_age_seconds=_env_int("SESSION_MAX_AGE_SECONDS", 28800, 300),
             enable_admin_api_docs=_env_bool("ENABLE_ADMIN_API_DOCS", False),
+            max_image_size_mb=_env_int("MAX_IMAGE_SIZE_MB", 30),
+            max_image_pixels=_env_int("MAX_IMAGE_PIXELS", 40_000_000),
+            allow_external_urls=_env_bool("ALLOW_EXTERNAL_URLS", False),
+            allow_private_http_external_urls=_env_bool(
+                "ALLOW_PRIVATE_HTTP_EXTERNAL_URLS", False
+            ),
+            external_url_allowed_hosts=_env_hosts("EXTERNAL_URL_ALLOWED_HOSTS"),
+            external_url_blocked_hosts=_env_hosts("EXTERNAL_URL_BLOCKED_HOSTS"),
+            external_url_require_https=_env_bool(
+                "EXTERNAL_URL_REQUIRE_HTTPS", True
+            ),
         )
         if not settings.admin_password_hash:
             raise ValueError("ADMIN_PASSWORD_HASH must be configured")
@@ -104,6 +131,10 @@ class Settings:
     @property
     def max_upload_size_bytes(self) -> int:
         return self.max_upload_size_mb * 1024 * 1024
+
+    @property
+    def max_image_size_bytes(self) -> int:
+        return self.max_image_size_mb * 1024 * 1024
 
     @property
     def bindings_dir(self) -> Path:

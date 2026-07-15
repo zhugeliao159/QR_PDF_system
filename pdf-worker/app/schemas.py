@@ -18,14 +18,17 @@ class ErrorEnvelope(BaseModel):
 class FileVersionOut(BaseModel):
     version_id: int
     version_number: int
-    original_filename: str
-    mime_type: str
-    size_bytes: int
-    sha256: str
+    original_filename: str | None = None
+    mime_type: str | None = None
+    size_bytes: int | None = None
+    sha256: str | None = None
     created_at: str
     is_current: bool
     note: str | None = None
     is_pinned: bool = False
+    target_type: Literal["file", "external_url"] = "file"
+    content_kind: Literal["pdf", "image", "file", "external_url"] = "file"
+    external_host: str | None = None
 
 
 class BindingOut(BaseModel):
@@ -35,9 +38,9 @@ class BindingOut(BaseModel):
     is_active: bool
     current_version: FileVersionOut
     version_count: int
-    original_filename: str
-    size_bytes: int
-    sha256: str
+    original_filename: str | None = None
+    size_bytes: int | None = None
+    sha256: str | None = None
     created_at: str
     updated_at: str
     note: str | None = None
@@ -47,6 +50,9 @@ class BindingOut(BaseModel):
     subject: str
     textbook_version: str | None = None
     chapter: str | None = None
+    target_type: Literal["file", "external_url"] = "file"
+    content_kind: Literal["pdf", "image", "file", "external_url"] = "file"
+    external_host: str | None = None
 
 
 class PdfJobOut(BaseModel):

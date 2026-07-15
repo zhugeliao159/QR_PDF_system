@@ -2,13 +2,27 @@
 {% block content %}
 <header class="page-heading"><div><p class="eyebrow">{{ material.display_code }}</p><h1>新建答案版本</h1><p class="muted">{{ material.title }}</p></div><a href="/admin/materials/{{ material.qr_id }}">返回资料详情</a></header>
 {% if error %}<div class="notice danger">{{ error }}</div>{% endif %}
-<div class="notice warning">新文件会先保存为草稿。预览并明确发布前，学生扫码仍会看到当前已发布答案。</div>
-<form method="post" enctype="multipart/form-data" class="form-layout narrow" data-submit-lock>
+<div class="notice warning">新内容会先保存为草稿。预览并明确发布前，学生扫码仍会看到当前已发布答案。</div>
+<form method="post" enctype="multipart/form-data" class="form-layout narrow" data-submit-lock data-content-form>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <section class="form-section">
-    <label class="file-drop">选择新的答案文件<input type="file" name="file" required></label>
-    <label>版本说明（可选）<textarea name="note" maxlength="500" rows="3"></textarea></label>
+    <h2>选择答案内容</h2>
+    <div class="segment-options content-options">
+      <label><input type="radio" name="content_type" value="pdf" checked data-content-choice><span><strong>上传 PDF</strong><small>适合多页答案和讲解资料</small></span></label>
+      <label><input type="radio" name="content_type" value="image" data-content-choice><span><strong>上传图片</strong><small>支持 PNG、JPEG 和 WebP</small></span></label>
+      {% if allow_external_urls %}<label><input type="radio" name="content_type" value="external_url" data-content-choice><span><strong>使用外部网页</strong><small>学生确认后打开受控网址</small></span></label>{% endif %}
+    </div>
   </section>
+  <section class="form-section" data-content-panel="file">
+    <label class="file-drop"><span data-file-prompt>选择 PDF 文件</span><input type="file" name="file" data-answer-file></label>
+    <p class="muted" data-file-help>PDF 会在学生页面中立即尝试显示。</p>
+  </section>
+  {% if allow_external_urls %}<section class="form-section" data-content-panel="external_url" hidden>
+    <label>外部网页地址<input type="url" name="external_url" placeholder="https://example.com/answer" autocomplete="off"></label>
+    <div class="notice warning">外部网页可能被对方修改、关闭或加入广告。系统只保存链接，不会抓取或保存网页内容。</div>
+    {% if allow_private_http_external_urls %}<div class="notice danger">私有 HTTP 地址仅适用于受控局域网测试，学生离开该网络后可能无法访问。</div>{% endif %}
+  </section>{% endif %}
+  <section class="form-section"><label>版本说明（可选）<textarea name="note" maxlength="500" rows="3"></textarea></label></section>
   <div class="form-actions"><a href="/admin/materials/{{ material.qr_id }}">取消</a><button class="primary" data-loading-text="正在保存草稿……">保存并预览草稿</button></div>
 </form>
 {% endblock %}

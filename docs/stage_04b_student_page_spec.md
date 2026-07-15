@@ -7,13 +7,15 @@
 - 不可变文件：`GET /content/{revision_key}`。
 - 旧 `/r/{qr_id}` 与 `/r/{qr_id}/versions/{version_id}` 保持兼容。
 
-二维码只包含不可猜的 public token，不包含文件名、存储路径或数据库自增 ID。页面正文不展示 token、revision key、SHA-256、API JSON 或管理员入口。
+二维码只包含不可猜的 public token，不包含文件名、存储路径或数据库自增 ID。页面正文不展示 token、revision key、SHA-256、API JSON 或管理员入口。外部网页正文只展示域名，不展示完整 URL 或敏感 query。
 
 ## 页面内容
 
-学生页面为简体中文，面向手机竖屏，显示资料名称、可选年级/学科/章节、当前版本、更新时间和内容区域。PDF 页面加载后由本地 `student.js` 立即把 object 指向当前路径的 `/content`，不要求学生先点击。
+学生页面为简体中文，面向手机竖屏，显示资料名称、可选年级/学科/章节、当前版本、更新时间和内容区域。PDF 页面加载后由本地 `student.js` 立即把 object 指向当前路径的 `/content`；图片立即用自适应 `<img>` 按原比例显示，两者都不要求学生先点击。
 
-页面同时提供“全屏打开”和“下载文件”。object 内置中文备用提示，浏览器不支持内嵌 PDF 时可以直接打开。页面不加载外部 CDN、PDF.js 或大型前端框架，也不在服务端把 PDF 转成图片。
+PDF 页面提供“全屏打开”和“下载文件”，图片页面提供查看原图和“下载图片”。object 内置中文备用提示，浏览器不支持内嵌 PDF 时可以直接打开。页面不加载外部 CDN、PDF.js 或大型前端框架，也不在服务端把 PDF 转成图片。
+
+外部网页不自动打开、不嵌入 iframe。学生先看到“此解析内容由外部网站提供”、目标域名和风险提示，明确点击“打开外部解析”后才使用 307 临时跳转。服务端只重新校验 URL、DNS 和目标 IP，不抓取第三方网页。
 
 ## 解析语义
 
@@ -21,6 +23,7 @@
 - `pinned` alias 每次请求读取 `pinned_revision_id`。
 - `/q/.../content` 使用 307 跳转，不使用永久 301。
 - `/content/{revision_key}` 只解析确定的 published revision，不查询最新版。
+- 外部跳转目标只来自已发布版本，不能被请求 query 参数覆盖。
 - resource 或 alias 停用时返回 410；文件丢失返回 503。
 
 ## 错误文案

@@ -97,6 +97,11 @@ th{background:#f8faf8;font-size:13px;color:#52605a}
 .draft-image{display:grid;place-items:center;min-height:360px;padding:20px;background:#e5e9e6}
 .draft-image img{max-width:100%;max-height:70vh}
 .publish-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:22px}
+.publish-actions form{display:grid;gap:10px}
+.external-draft{padding:26px;border:1px solid var(--line);background:#fff}
+.external-draft h2{margin:4px 0;font-size:24px;overflow-wrap:anywhere}
+.external-draft>p:not(.eyebrow){color:var(--muted);line-height:1.7}
+.external-draft>.button-link{margin:8px 0 20px}
 .status-form{margin-top:28px}
 .wizard-step{display:grid;grid-template-columns:42px 1fr;gap:16px}
 .wizard-step>div,.wizard-step fieldset{min-width:0}
@@ -110,6 +115,7 @@ input[type=file]{max-width:100%}
 .material-option span{display:grid;margin-left:10px}
 .material-option small{font-weight:400;color:var(--muted)}
 .segment-options{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.content-options{grid-template-columns:repeat(3,1fr)}
 .segment-options label{display:flex;border:1px solid var(--line);padding:16px;cursor:pointer}
 .segment-options input{width:auto}
 .segment-options span{display:grid;margin-left:10px}
@@ -135,6 +141,7 @@ input[type=file]{max-width:100%}
 .filter-bar .grow{grid-column:span 2}
 .qr-panel{max-width:420px}
 .segment-options{grid-template-columns:1fr}
+.content-options{grid-template-columns:1fr}
 }
 @media(max-width:560px){.page-heading{display:block}
 .page-heading>.status-tag{margin-top:8px}

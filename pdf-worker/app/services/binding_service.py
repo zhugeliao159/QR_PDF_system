@@ -3,9 +3,11 @@ from __future__ import annotations
 import logging
 import sqlite3
 import uuid
+import warnings
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import fitz
 from fastapi import UploadFile
@@ -23,11 +25,17 @@ from app.services.decoupled import (
     ResolvedAnswer,
 )
 from app.services.qr_service import QrService
+from app.services.external_url import ExternalUrlValidator
 from app.storage.base import StorageBackend
 
 
 logger = logging.getLogger(__name__)
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+ALLOWED_IMAGE_FORMATS = {
+    "PNG": "image/png",
+    "JPEG": "image/jpeg",
+    "WEBP": "image/webp",
+}
 GRADES = {"未分类", "高一", "高二", "高三", "高中通用"}
 SUBJECTS = {
     "未分类", "语文", "数学", "英语", "物理", "化学", "生物", "思想政治",
@@ -48,6 +56,7 @@ class BindingService:
         revision_service: AnswerRevisionService | None = None,
         asset_service: AssetService | None = None,
         resolver_service: QrResolverService | None = None,
+        external_url_validator: ExternalUrlValidator | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
@@ -55,8 +64,11 @@ class BindingService:
         self.qr_service = qr_service
         self.asset_service = asset_service or AssetService(database, storage)
         self.resource_service = resource_service or AnswerResourceService(database)
+        self.external_url_validator = external_url_validator or ExternalUrlValidator(
+            settings
+        )
         self.revision_service = revision_service or AnswerRevisionService(
-            database, self.asset_service
+            database, self.asset_service, self.external_url_validator
         )
         self.resolver_service = resolver_service or QrResolverService(database)
 
@@ -92,24 +104,66 @@ class BindingService:
 
         if stored.mime_type.startswith("image/") or suffix in IMAGE_SUFFIXES:
             try:
-                with Image.open(path) as image:
-                    image.verify()
-                    detected = Image.MIME.get(image.format, stored.mime_type)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", Image.DecompressionBombWarning)
+                    with Image.open(path) as image:
+                        image_format = image.format or ""
+                        if image_format not in ALLOWED_IMAGE_FORMATS:
+                            raise AppError(
+                                415,
+                                "UNSUPPORTED_IMAGE_FORMAT",
+                                "image format is not supported",
+                            )
+                        width, height = image.size
+                        if width <= 0 or height <= 0:
+                            raise AppError(422, "INVALID_IMAGE_DIMENSIONS", "image dimensions are invalid")
+                        if width * height > self.settings.max_image_pixels:
+                            raise AppError(413, "IMAGE_PIXELS_EXCEEDED", "image pixel count is too large")
+                        image.load()
+                        detected = ALLOWED_IMAGE_FORMATS[image_format]
+            except AppError:
+                raise
+            except (Image.DecompressionBombWarning, Image.DecompressionBombError) as exc:
+                raise AppError(413, "IMAGE_PIXELS_EXCEEDED", "image pixel count is too large") from exc
             except (OSError, UnidentifiedImageError) as exc:
                 raise AppError(415, "INVALID_IMAGE_FILE", "image cannot be opened") from exc
             return replace(stored, mime_type=detected)
 
         return stored
 
+    def _validate_answer_upload(
+        self, stored: StoredObject, expected_kind: str | None
+    ) -> StoredObject:
+        validated = self._validate_binding_file(stored)
+        if expected_kind == "pdf" and validated.mime_type != "application/pdf":
+            raise AppError(415, "PDF_REQUIRED", "selected file is not a PDF")
+        if expected_kind == "image" and validated.mime_type not in ALLOWED_IMAGE_FORMATS.values():
+            raise AppError(415, "IMAGE_REQUIRED", "selected file is not a supported image")
+        if expected_kind not in {None, "file", "pdf", "image"}:
+            raise AppError(422, "CONTENT_TYPE_INVALID", "content type is invalid")
+        return validated
+
     @staticmethod
     def _version_out(row: dict[str, Any], current_revision_id: int) -> dict[str, Any]:
+        mime_type = row.get("mime_type")
+        target_type = row["target_type"]
+        content_kind = (
+            "external_url"
+            if target_type == "external_url"
+            else "pdf"
+            if mime_type == "application/pdf"
+            else "image"
+            if (mime_type or "").startswith("image/")
+            else "file"
+        )
+        external_url = row.get("external_url")
         return {
             "version_id": row["id"],
             "version_number": row["revision_number"],
-            "original_filename": row["original_filename"],
-            "mime_type": row["mime_type"],
-            "size_bytes": row["size_bytes"],
-            "sha256": row["sha256"],
+            "original_filename": row.get("original_filename"),
+            "mime_type": mime_type,
+            "size_bytes": row.get("size_bytes"),
+            "sha256": row.get("sha256"),
             "created_at": row["created_at"],
             "is_current": row["id"] == current_revision_id,
             "note": row["change_note"],
@@ -117,6 +171,14 @@ class BindingService:
             "revision_key": row["revision_key"],
             "status": row["status"],
             "published_at": row["published_at"],
+            "target_type": target_type,
+            "content_kind": content_kind,
+            "external_url": external_url,
+            "external_host": (
+                (urlsplit(external_url).hostname or "") if external_url else None
+            ),
+            "display_name": row.get("original_filename")
+            or ((urlsplit(external_url).hostname or "外部网页") if external_url else "答案内容"),
         }
 
     @staticmethod
@@ -162,13 +224,13 @@ class BindingService:
             "current_version_id": resource["current_published_revision_id"],
             "version_id": revision["id"],
             "version_number": revision["revision_number"],
-            "original_filename": asset["original_filename"],
-            "mime_type": asset["mime_type"],
-            "size_bytes": asset["size_bytes"],
-            "sha256": asset["sha256"],
+            "original_filename": asset["original_filename"] if asset else None,
+            "mime_type": asset["mime_type"] if asset else None,
+            "size_bytes": asset["size_bytes"] if asset else None,
+            "sha256": asset["sha256"] if asset else None,
             "version_created_at": revision["created_at"],
             "version_note": revision["change_note"],
-            "storage_path": asset["storage_key"],
+            "storage_path": asset["storage_key"] if asset else None,
             "title": resource["name"],
             "display_code": resource["display_code"],
             "grade": resource["grade"],
@@ -204,7 +266,7 @@ class BindingService:
             ).fetchone() is not None
         version_row = {
             **resolved.revision,
-            **resolved.asset,
+            **(resolved.asset or {}),
             "id": resolved.revision["id"],
             "created_at": resolved.revision["created_at"],
             "is_pinned": pinned,
@@ -230,6 +292,9 @@ class BindingService:
             "textbook_version": row["textbook_version"],
             "chapter": row["chapter"],
             "row_version": row["row_version"],
+            "target_type": current["target_type"],
+            "content_kind": current["content_kind"],
+            "external_host": current["external_host"],
         }
 
     async def create_binding(
@@ -378,13 +443,19 @@ class BindingService:
         upload: UploadFile,
         note: str | None,
         actor: str,
+        expected_kind: str | None = None,
     ) -> dict[str, Any]:
         binding = self._binding_row(qr_id)
+        size_limit = (
+            self.settings.max_image_size_bytes
+            if expected_kind == "image"
+            else self.settings.max_upload_size_bytes
+        )
         stored = await self.storage.save_binding_upload(
-            upload, qr_id, self.settings.max_upload_size_bytes
+            upload, qr_id, size_limit
         )
         try:
-            stored = self._validate_binding_file(stored)
+            stored = self._validate_answer_upload(stored, expected_kind)
             now = utc_now_iso()
             with self.database.transaction() as connection:
                 draft = self.revision_service.create_draft(
@@ -397,6 +468,49 @@ class BindingService:
             "answer draft created public_token=%s revision_number=%s",
             qr_id,
             draft["revision_number"],
+        )
+        return self.draft_details(qr_id, draft["revision_key"])
+
+    def create_external_draft(
+        self,
+        qr_id: str,
+        external_url: str,
+        note: str | None,
+        actor: str,
+    ) -> dict[str, Any]:
+        binding = self._binding_row(qr_id)
+        try:
+            validated = self.external_url_validator.validate(external_url)
+        except AppError:
+            with self.database.transaction() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO audit_events
+                        (event_type, resource_id, actor, summary, created_at)
+                    VALUES ('external_url_validation_failed', ?, ?, ?, ?)
+                    """,
+                    (
+                        binding["id"],
+                        actor,
+                        f"外部网址校验失败：{self.external_url_validator.hostname_hint(external_url)}",
+                        utc_now_iso(),
+                    ),
+                )
+            raise
+        now = utc_now_iso()
+        with self.database.transaction() as connection:
+            draft = self.revision_service.create_external_draft(
+                connection,
+                binding["id"],
+                validated.url,
+                note,
+                now,
+                actor,
+            )
+        logger.info(
+            "external answer draft created public_token=%s host=%s",
+            qr_id,
+            validated.hostname,
         )
         return self.draft_details(qr_id, draft["revision_key"])
 
@@ -416,6 +530,8 @@ class BindingService:
         revision = self.revision_service.get_by_key(binding["id"], revision_key)
         if revision["status"] != "draft":
             raise AppError(409, "VERSION_NOT_DRAFT", "version is not a draft")
+        if revision["target_type"] != "file":
+            raise AppError(409, "VERSION_NOT_FILE", "version does not contain a file")
         return (
             self.storage.resolve(revision["storage_key"]),
             revision["original_filename"],
@@ -464,6 +580,13 @@ class BindingService:
         )
         return self.get_binding(qr_id, allow_inactive=True)
 
+    def published_revision(self, qr_id: str, revision_key: str) -> dict[str, Any]:
+        binding = self._binding_row(qr_id, allow_inactive=True)
+        revision = self.revision_service.get_by_key(binding["id"], revision_key)
+        if revision["status"] != "published":
+            raise AppError(409, "VERSION_NOT_PUBLISHED", "version is not published")
+        return self._version_out(revision, binding["version_id"])
+
     def discard_draft(self, qr_id: str, revision_key: str, actor: str) -> None:
         binding = self._binding_row(qr_id, allow_inactive=True)
         candidate = self.revision_service.get_by_key(binding["id"], revision_key)
@@ -475,7 +598,7 @@ class BindingService:
                     """
                     SELECT v.*, a.storage_key
                     FROM answer_revisions v
-                    JOIN assets a ON a.id = v.asset_id
+                    LEFT JOIN assets a ON a.id = v.asset_id
                     WHERE v.resource_id = ? AND v.revision_key = ?
                     """,
                     (binding["id"], revision_key),
@@ -495,14 +618,16 @@ class BindingService:
                     (revision["id"],),
                 ).fetchone():
                     raise AppError(409, "VERSION_REFERENCED", "referenced version cannot be discarded")
-                reference_count = int(
-                    connection.execute(
-                        "SELECT COUNT(*) FROM answer_revisions WHERE asset_id = ?",
-                        (revision["asset_id"],),
-                    ).fetchone()[0]
-                )
-                delete_asset = reference_count == 1
-                if delete_asset:
+                reference_count = 0
+                if revision["asset_id"] is not None:
+                    reference_count = int(
+                        connection.execute(
+                            "SELECT COUNT(*) FROM answer_revisions WHERE asset_id = ?",
+                            (revision["asset_id"],),
+                        ).fetchone()[0]
+                    )
+                delete_asset = revision["asset_id"] is not None and reference_count == 1
+                if delete_asset and revision["storage_key"]:
                     trash_path = self.storage.move_to_trash(revision["storage_key"])
                 connection.execute(
                     """
@@ -679,6 +804,8 @@ class BindingService:
 
     def current_file(self, qr_id: str) -> tuple[Path, str, str]:
         resolved = self.resolver_service.resolve_latest(qr_id)
+        if resolved.asset is None:
+            raise AppError(409, "VERSION_NOT_FILE", "current version does not contain a file")
         return (
             self.asset_service.path(resolved.asset),
             resolved.asset["original_filename"],
@@ -687,6 +814,8 @@ class BindingService:
 
     def version_file(self, qr_id: str, version_id: int) -> tuple[Path, str, str]:
         resolved = self.resolver_service.resolve_revision(qr_id, version_id)
+        if resolved.asset is None:
+            raise AppError(409, "VERSION_NOT_FILE", "version does not contain a file")
         return (
             self.asset_service.path(resolved.asset),
             resolved.asset["original_filename"],

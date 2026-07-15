@@ -23,3 +23,21 @@ if (search) {
     });
   });
 }
+
+const contentForm = document.querySelector("[data-content-form]");
+if (contentForm) {
+  const refreshContentFields = () => {
+    const selected = contentForm.querySelector("[data-content-choice]:checked")?.value || "pdf";
+    contentForm.querySelectorAll("[data-content-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.contentPanel === "external_url" ? selected !== "external_url" : selected === "external_url";
+    });
+    const prompt = contentForm.querySelector("[data-file-prompt]");
+    const help = contentForm.querySelector("[data-file-help]");
+    const file = contentForm.querySelector("[data-answer-file]");
+    if (prompt) prompt.textContent = selected === "image" ? "选择 PNG、JPEG 或 WebP 图片" : "选择 PDF 文件";
+    if (help) help.textContent = selected === "image" ? "图片会保持原比例并在学生页面中立即显示。" : "PDF 会在学生页面中立即尝试显示。";
+    if (file) file.accept = selected === "image" ? "image/png,image/jpeg,image/webp" : "application/pdf";
+  };
+  contentForm.querySelectorAll("[data-content-choice]").forEach((choice) => choice.addEventListener("change", refreshContentFields));
+  refreshContentFields();
+}

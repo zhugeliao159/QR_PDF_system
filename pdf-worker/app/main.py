@@ -28,6 +28,7 @@ from app.services.decoupled import (
 )
 from app.services.pdf_service import PdfService
 from app.services.qr_service import QrService
+from app.services.external_url import ExternalUrlValidator
 from app.storage.local import LocalStorageBackend
 
 
@@ -51,7 +52,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         qr_service = QrService(configured_settings.public_base_url)
         asset_service = AssetService(database, storage)
         resource_service = AnswerResourceService(database)
-        revision_service = AnswerRevisionService(database, asset_service)
+        external_url_validator = ExternalUrlValidator(configured_settings)
+        revision_service = AnswerRevisionService(
+            database, asset_service, external_url_validator
+        )
         resolver_service = QrResolverService(database)
         binding_service = BindingService(
             configured_settings,
@@ -62,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             revision_service,
             asset_service,
             resolver_service,
+            external_url_validator,
         )
         pdf_service = PdfService(
             configured_settings, database, storage, binding_service, qr_service
@@ -72,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.asset_service = asset_service
         application.state.resource_service = resource_service
         application.state.revision_service = revision_service
+        application.state.external_url_validator = external_url_validator
         application.state.resolver_service = resolver_service
         application.state.binding_service = binding_service
         application.state.pdf_service = pdf_service

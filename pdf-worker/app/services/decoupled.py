@@ -10,6 +10,7 @@ from app.database import Database, new_public_key
 from app.errors import AppError
 from app.models import StoredObject, utc_now_iso
 from app.storage.base import StorageBackend
+from app.services.external_url import ExternalUrlValidator
 
 
 @dataclass(frozen=True)
@@ -17,7 +18,7 @@ class ResolvedAnswer:
     alias: dict[str, Any]
     resource: dict[str, Any]
     revision: dict[str, Any]
-    asset: dict[str, Any]
+    asset: dict[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -130,10 +131,10 @@ class AnswerResourceService:
         if search.strip():
             clauses.append(
                 "(r.name LIKE ? OR r.display_code LIKE ? OR a.original_filename LIKE ? "
-                "OR r.textbook_version LIKE ? OR r.chapter LIKE ?)"
+                "OR r.textbook_version LIKE ? OR r.chapter LIKE ? OR v.external_url LIKE ?)"
             )
             pattern = f"%{search.strip()}%"
-            parameters.extend([pattern] * 5)
+            parameters.extend([pattern] * 6)
         if grade:
             clauses.append("r.grade = ?")
             parameters.append(grade)
@@ -163,7 +164,7 @@ class AnswerResourceService:
                        CASE WHEN r.status = 'active' THEN 1 ELSE 0 END AS is_active,
                        q.public_token AS qr_id,
                        a.original_filename, v.revision_number AS version_number,
-                       a.size_bytes
+                       a.size_bytes, v.target_type, v.external_url
                 FROM answer_resources r
                 JOIN qr_aliases q
                   ON q.resource_id = r.id AND q.resolve_mode = 'latest'
@@ -233,9 +234,15 @@ class AnswerResourceService:
 
 
 class AnswerRevisionService:
-    def __init__(self, database: Database, asset_service: AssetService) -> None:
+    def __init__(
+        self,
+        database: Database,
+        asset_service: AssetService,
+        external_url_validator: ExternalUrlValidator | None = None,
+    ) -> None:
         self.database = database
         self.asset_service = asset_service
+        self.external_url_validator = external_url_validator
 
     def create_published(
         self,
@@ -321,13 +328,17 @@ class AnswerRevisionService:
             (revision_key, resource_id, revision_number, asset_id, note, created_at),
         )
         revision_id = int(cursor.lastrowid)
+        event_type = (
+            "create_image_draft" if stored.mime_type.startswith("image/") else "create_draft"
+        )
         connection.execute(
             """
             INSERT INTO audit_events
                 (event_type, resource_id, revision_id, actor, summary, created_at)
-            VALUES ('create_draft', ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
+                event_type,
                 resource_id,
                 revision_id,
                 actor,
@@ -342,6 +353,62 @@ class AnswerRevisionService:
             "asset_id": asset_id,
         }
 
+    def create_external_draft(
+        self,
+        connection: sqlite3.Connection,
+        resource_id: int,
+        external_url: str,
+        note: str | None,
+        created_at: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        resource = connection.execute(
+            "SELECT id, status FROM answer_resources WHERE id = ?", (resource_id,)
+        ).fetchone()
+        if resource is None:
+            raise AppError(404, "RESOURCE_NOT_FOUND", "answer resource does not exist")
+        if resource["status"] != "active":
+            raise AppError(410, "RESOURCE_INACTIVE", "answer resource is inactive")
+        revision_number = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(revision_number), 0) + 1 "
+                "FROM answer_revisions WHERE resource_id = ?",
+                (resource_id,),
+            ).fetchone()[0]
+        )
+        revision_key = new_public_key()
+        cursor = connection.execute(
+            """
+            INSERT INTO answer_revisions
+                (revision_key, resource_id, revision_number, target_type,
+                 asset_id, external_url, status, change_note,
+                 created_at, published_at)
+            VALUES (?, ?, ?, 'external_url', NULL, ?, 'draft', ?, ?, NULL)
+            """,
+            (revision_key, resource_id, revision_number, external_url, note, created_at),
+        )
+        revision_id = int(cursor.lastrowid)
+        connection.execute(
+            """
+            INSERT INTO audit_events
+                (event_type, resource_id, revision_id, actor, summary, created_at)
+            VALUES ('create_external_url_draft', ?, ?, ?, ?, ?)
+            """,
+            (
+                resource_id,
+                revision_id,
+                actor,
+                f"创建第 {revision_number} 版外部网页草稿",
+                created_at,
+            ),
+        )
+        return {
+            "id": revision_id,
+            "revision_key": revision_key,
+            "revision_number": revision_number,
+            "asset_id": None,
+        }
+
     def get_by_key(self, resource_id: int, revision_key: str) -> dict[str, Any]:
         with self.database.read() as connection:
             row = connection.execute(
@@ -349,7 +416,7 @@ class AnswerRevisionService:
                 SELECT v.*, a.asset_key, a.storage_backend, a.storage_key,
                        a.original_filename, a.mime_type, a.size_bytes, a.sha256
                 FROM answer_revisions v
-                JOIN assets a ON a.id = v.asset_id
+                LEFT JOIN assets a ON a.id = v.asset_id
                 WHERE v.resource_id = ? AND v.revision_key = ?
                 """,
                 (resource_id, revision_key),
@@ -422,11 +489,20 @@ class AnswerRevisionService:
                 "VERSION_STATUS_INVALID",
                 "当前答案版本状态已经变化，请刷新页面后重试。",
             )
-        if target["target_type"] != "file" or target["asset_id"] is None:
+        if target["target_type"] == "file":
+            if target["asset_id"] is None or target["external_url"] is not None:
+                raise AppError(409, "VERSION_TARGET_INVALID", "file version target is invalid")
+            if target["asset_key"] is None:
+                raise AppError(503, "ASSET_MISSING", "answer asset does not exist")
+            self._validate_asset(dict(target))
+        elif target["target_type"] == "external_url":
+            if target["asset_id"] is not None or not target["external_url"]:
+                raise AppError(409, "VERSION_TARGET_INVALID", "external URL target is invalid")
+            if self.external_url_validator is None:
+                raise AppError(503, "EXTERNAL_URL_VALIDATOR_MISSING", "external URL validation is unavailable")
+            self.external_url_validator.validate(target["external_url"])
+        else:
             raise AppError(409, "VERSION_TARGET_UNSUPPORTED", "version target is unsupported")
-        if target["asset_key"] is None:
-            raise AppError(503, "ASSET_MISSING", "answer asset does not exist")
-        self._validate_asset(dict(target))
 
         now = utc_now_iso()
         result = connection.execute(
@@ -453,9 +529,22 @@ class AnswerRevisionService:
                 """,
                 (now, revision_id),
             )
+        actual_event_type = event_type
+        if event_type == "publish_revision" and target["target_type"] == "external_url":
+            actual_event_type = "publish_external_url_revision"
+        elif (
+            event_type == "publish_revision"
+            and (target["mime_type"] or "").startswith("image/")
+        ):
+            actual_event_type = "publish_image_revision"
+        elif event_type == "republish_revision" and target["target_type"] == "external_url":
+            actual_event_type = "republish_external_url_revision"
         event_names = {
             "publish_revision": "发布",
+            "publish_image_revision": "发布图片",
+            "publish_external_url_revision": "发布外部网页",
             "republish_revision": "重新发布",
+            "republish_external_url_revision": "重新发布外部网页",
             "legacy_immediate_publish": "通过兼容接口立即发布",
         }
         connection.execute(
@@ -465,11 +554,11 @@ class AnswerRevisionService:
             VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
-                event_type,
+                actual_event_type,
                 resource_id,
                 revision_id,
                 actor,
-                f"{event_names[event_type]}第 {target['revision_number']} 版答案",
+                f"{event_names[actual_event_type]}第 {target['revision_number']} 版答案",
                 now,
             ),
         )
@@ -519,7 +608,7 @@ class AnswerRevisionService:
                            WHERE rr.revision_id = v.id
                        ) AS is_pinned
                 FROM answer_revisions v
-                JOIN assets a ON a.id = v.asset_id
+                LEFT JOIN assets a ON a.id = v.asset_id
                 WHERE v.resource_id = ?
                 ORDER BY v.revision_number DESC
                 """,
@@ -531,8 +620,10 @@ class AnswerRevisionService:
         with self.database.transaction() as connection:
             target = connection.execute(
                 """
-                SELECT v.id, v.status, v.asset_id
+                SELECT v.*, a.asset_key, a.storage_backend, a.storage_key,
+                       a.original_filename, a.mime_type, a.size_bytes, a.sha256
                 FROM answer_revisions v
+                LEFT JOIN assets a ON a.id = v.asset_id
                 WHERE v.id = ? AND v.resource_id = ?
                 """,
                 (revision_id, resource_id),
@@ -541,12 +632,16 @@ class AnswerRevisionService:
                 raise AppError(404, "VERSION_NOT_FOUND", "version does not exist")
             if target["status"] != "published":
                 raise AppError(409, "VERSION_NOT_PUBLISHED", "version is not published")
-            asset = connection.execute(
-                "SELECT * FROM assets WHERE id = ?", (target["asset_id"],)
-            ).fetchone()
-            if asset is None:
-                raise AppError(503, "ASSET_MISSING", "answer asset does not exist")
-            self.asset_service.path(dict(asset))
+            if target["target_type"] == "file":
+                if target["asset_key"] is None:
+                    raise AppError(503, "ASSET_MISSING", "answer asset does not exist")
+                self._validate_asset(dict(target))
+            elif target["target_type"] == "external_url":
+                if self.external_url_validator is None:
+                    raise AppError(503, "EXTERNAL_URL_VALIDATOR_MISSING", "external URL validation is unavailable")
+                self.external_url_validator.validate(target["external_url"])
+            else:
+                raise AppError(409, "VERSION_TARGET_UNSUPPORTED", "version target is unsupported")
             result = connection.execute(
                 """
                 UPDATE answer_resources
@@ -659,10 +754,6 @@ class QrResolverService:
             raise AppError(404, "VERSION_NOT_FOUND", "version does not exist")
         if row["status"] != "published":
             raise AppError(404, "PUBLISHED_VERSION_MISSING", "published version is unavailable")
-        if row["target_type"] != "file" or row["asset_id"] is None:
-            raise AppError(409, "VERSION_TARGET_UNSUPPORTED", "version target is unsupported")
-        if row["asset_key"] is None:
-            raise AppError(503, "ASSET_MISSING", "answer asset does not exist")
         revision = {
             key: row[key]
             for key in (
@@ -671,17 +762,34 @@ class QrResolverService:
                 "change_note", "created_at", "published_at", "legacy_version_id",
             )
         }
-        asset = {
-            "id": row["asset_id"],
-            "asset_key": row["asset_key"],
-            "storage_backend": row["storage_backend"],
-            "storage_key": row["storage_key"],
-            "original_filename": row["original_filename"],
-            "mime_type": row["mime_type"],
-            "size_bytes": row["size_bytes"],
-            "sha256": row["sha256"],
-            "created_at": row["asset_created_at"],
-        }
+        if row["target_type"] == "file":
+            if row["asset_id"] is None or row["external_url"] is not None:
+                raise AppError(409, "VERSION_TARGET_INVALID", "file version target is invalid")
+            if row["asset_key"] is None:
+                raise AppError(503, "ASSET_MISSING", "answer asset does not exist")
+            asset = {
+                "id": row["asset_id"],
+                "asset_key": row["asset_key"],
+                "storage_backend": row["storage_backend"],
+                "storage_key": row["storage_key"],
+                "original_filename": row["original_filename"],
+                "mime_type": row["mime_type"],
+                "size_bytes": row["size_bytes"],
+                "sha256": row["sha256"],
+                "created_at": row["asset_created_at"],
+            }
+            revision["content_kind"] = (
+                "pdf"
+                if row["mime_type"] == "application/pdf"
+                else "image" if row["mime_type"].startswith("image/") else "file"
+            )
+        elif row["target_type"] == "external_url":
+            if row["asset_id"] is not None or not row["external_url"]:
+                raise AppError(409, "VERSION_TARGET_INVALID", "external URL target is invalid")
+            asset = None
+            revision["content_kind"] = "external_url"
+        else:
+            raise AppError(409, "VERSION_TARGET_UNSUPPORTED", "version target is unsupported")
         return ResolvedAnswer(alias, resource, revision, asset)
 
     def resolve_latest(

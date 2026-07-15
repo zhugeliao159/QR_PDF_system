@@ -27,6 +27,12 @@ h1 { margin: 0; font-size: 25px; line-height: 1.3; overflow-wrap: anywhere; }
 .content-section { margin-top: 16px; background: #e7ecef; border: 1px solid #ccd6dc; min-height: 58vh; }
 .pdf-viewer { display: block; width: 100%; height: 68vh; min-height: 480px; border: 0; background: #fff; }
 .preview-fallback, .file-fallback { display: grid; place-content: center; min-height: 58vh; padding: 28px; text-align: center; }
+.image-link { display: grid; place-items: start center; min-height: 58vh; padding: 12px; background: #fff; }
+.answer-image { display: block; max-width: 100%; height: auto; object-fit: contain; }
+.external-notice { display: grid; place-content: center; min-height: 58vh; padding: 32px; text-align: center; }
+.external-notice .source-label { margin: 0 0 8px; color: #53616c; font-size: 14px; }
+.external-notice h2 { margin: 0; font-size: 22px; overflow-wrap: anywhere; }
+.external-notice p:not(.source-label) { max-width: 560px; margin: 12px auto 22px; color: #53616c; line-height: 1.7; }
 .preview-fallback h2, .file-fallback h2 { margin: 0 0 8px; font-size: 19px; }
 .preview-fallback p, .file-fallback p { margin: 0 0 20px; color: #53616c; overflow-wrap: anywhere; }
 
