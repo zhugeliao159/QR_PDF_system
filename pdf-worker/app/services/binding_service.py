@@ -12,9 +12,16 @@ from fastapi import UploadFile
 from PIL import Image, UnidentifiedImageError
 
 from app.config import Settings
-from app.database import Database
+from app.database import Database, new_public_key
 from app.errors import AppError
 from app.models import StoredObject, utc_now_iso
+from app.services.decoupled import (
+    AnswerResourceService,
+    AnswerRevisionService,
+    AssetService,
+    QrResolverService,
+    ResolvedAnswer,
+)
 from app.services.qr_service import QrService
 from app.storage.base import StorageBackend
 
@@ -29,17 +36,29 @@ SUBJECTS = {
 
 
 class BindingService:
+    """Compatibility facade backed exclusively by the decoupled Stage 04A model."""
+
     def __init__(
         self,
         settings: Settings,
         database: Database,
         storage: StorageBackend,
         qr_service: QrService,
+        resource_service: AnswerResourceService | None = None,
+        revision_service: AnswerRevisionService | None = None,
+        asset_service: AssetService | None = None,
+        resolver_service: QrResolverService | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
         self.storage = storage
         self.qr_service = qr_service
+        self.asset_service = asset_service or AssetService(database, storage)
+        self.resource_service = resource_service or AnswerResourceService(database)
+        self.revision_service = revision_service or AnswerRevisionService(
+            database, self.asset_service
+        )
+        self.resolver_service = resolver_service or QrResolverService(database)
 
     def _validate_binding_file(self, stored: StoredObject) -> StoredObject:
         path = self.storage.resolve(stored.relative_path)
@@ -83,18 +102,18 @@ class BindingService:
         return stored
 
     @staticmethod
-    def _version_out(row: sqlite3.Row, current_version_id: int) -> dict[str, Any]:
+    def _version_out(row: dict[str, Any], current_revision_id: int) -> dict[str, Any]:
         return {
             "version_id": row["id"],
-            "version_number": row["version_number"],
+            "version_number": row["revision_number"],
             "original_filename": row["original_filename"],
             "mime_type": row["mime_type"],
             "size_bytes": row["size_bytes"],
             "sha256": row["sha256"],
             "created_at": row["created_at"],
-            "is_current": row["id"] == current_version_id,
-            "note": row["note"],
-            "is_pinned": bool(row["is_pinned"]) if "is_pinned" in row.keys() else False,
+            "is_current": row["id"] == current_revision_id,
+            "note": row["change_note"],
+            "is_pinned": bool(row.get("is_pinned", False)),
         }
 
     @staticmethod
@@ -129,44 +148,63 @@ class BindingService:
             "note": optional(note, 500, "note"),
         }
 
-    def _binding_row(self, qr_id: str, allow_inactive: bool = False) -> sqlite3.Row:
-        with self.database.read() as connection:
-            row = connection.execute(
-                """
-                SELECT b.*, v.id AS version_id, v.version_number,
-                       v.original_filename, v.mime_type, v.size_bytes, v.sha256,
-                       v.created_at AS version_created_at, v.note AS version_note,
-                       v.storage_path
-                FROM bindings b
-                LEFT JOIN file_versions v ON v.id = b.current_version_id
-                WHERE b.qr_id = ?
-                """,
-                (qr_id,),
-            ).fetchone()
-        if row is None:
-            raise AppError(404, "BINDING_NOT_FOUND", "binding does not exist")
-        if not row["is_active"] and not allow_inactive:
-            raise AppError(410, "BINDING_INACTIVE", "binding is inactive")
-        if row["version_id"] is None:
-            raise AppError(409, "CURRENT_VERSION_MISSING", "current version is unavailable")
-        return row
+    @staticmethod
+    def _compatibility_row(resolved: ResolvedAnswer) -> dict[str, Any]:
+        resource = resolved.resource
+        revision = resolved.revision
+        asset = resolved.asset
+        return {
+            "id": resource["id"],
+            "qr_id": resolved.alias["public_token"],
+            "current_version_id": resource["current_published_revision_id"],
+            "version_id": revision["id"],
+            "version_number": revision["revision_number"],
+            "original_filename": asset["original_filename"],
+            "mime_type": asset["mime_type"],
+            "size_bytes": asset["size_bytes"],
+            "sha256": asset["sha256"],
+            "version_created_at": revision["created_at"],
+            "version_note": revision["change_note"],
+            "storage_path": asset["storage_key"],
+            "title": resource["name"],
+            "display_code": resource["display_code"],
+            "grade": resource["grade"],
+            "subject": resource["subject"],
+            "textbook_version": resource["textbook_version"],
+            "chapter": resource["chapter"],
+            "note": resource["note"],
+            "created_at": resource["created_at"],
+            "updated_at": resource["updated_at"],
+            "is_active": 1 if resource["status"] == "active" else 0,
+            "resource_key": resource["resource_key"],
+            "revision_key": revision["revision_key"],
+        }
+
+    def _binding_row(self, qr_id: str, allow_inactive: bool = False) -> dict[str, Any]:
+        resolved = self.resolver_service.resolve_latest(qr_id, allow_inactive)
+        return self._compatibility_row(resolved)
 
     def get_binding(self, qr_id: str, allow_inactive: bool = False) -> dict[str, Any]:
-        row = self._binding_row(qr_id, allow_inactive)
+        resolved = self.resolver_service.resolve_latest(qr_id, allow_inactive)
+        row = self._compatibility_row(resolved)
         with self.database.read() as connection:
-            version_count = connection.execute(
-                "SELECT COUNT(*) FROM file_versions WHERE binding_id = ?",
-                (row["id"],),
-            ).fetchone()[0]
-            version_row = connection.execute(
-                """
-                SELECT v.*, EXISTS(
-                    SELECT 1 FROM version_references r WHERE r.version_id = v.id
-                ) AS is_pinned
-                FROM file_versions v WHERE v.id = ?
-                """,
+            version_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM answer_revisions WHERE resource_id = ?",
+                    (row["id"],),
+                ).fetchone()[0]
+            )
+            pinned = connection.execute(
+                "SELECT 1 FROM revision_references WHERE revision_id = ? LIMIT 1",
                 (row["version_id"],),
-            ).fetchone()
+            ).fetchone() is not None
+        version_row = {
+            **resolved.revision,
+            **resolved.asset,
+            "id": resolved.revision["id"],
+            "created_at": resolved.revision["created_at"],
+            "is_pinned": pinned,
+        }
         current = self._version_out(version_row, row["version_id"])
         return {
             "qr_id": row["qr_id"],
@@ -215,50 +253,51 @@ class BindingService:
             )
             now = utc_now_iso()
             with self.database.transaction() as connection:
-                display_code = self.database._unique_display_code(connection)
-                cursor = connection.execute(
-                    """
-                    INSERT INTO bindings
-                        (qr_id, current_version_id, title, display_code, grade, subject,
-                         textbook_version, chapter, created_at, updated_at, note, is_active)
-                    VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-                    """,
-                    (
-                        qr_id, metadata["title"], display_code, metadata["grade"],
-                        metadata["subject"], metadata["textbook_version"],
-                        metadata["chapter"], now, now, metadata["note"],
-                    ),
+                display_code = self.database._unique_display_code(
+                    connection, "answer_resources"
                 )
-                binding_id = int(cursor.lastrowid)
-                version_cursor = connection.execute(
+                resource_id = self.resource_service.create(
+                    connection,
+                    resource_key=new_public_key(),
+                    name=str(metadata["title"]),
+                    display_code=display_code,
+                    grade=str(metadata["grade"]),
+                    subject=str(metadata["subject"]),
+                    textbook_version=metadata["textbook_version"],
+                    chapter=metadata["chapter"],
+                    note=metadata["note"],
+                    created_at=now,
+                )
+                revision_id, _ = self.revision_service.create_published(
+                    connection, resource_id, stored, metadata["note"], now
+                )
+                alias_cursor = connection.execute(
                     """
-                    INSERT INTO file_versions
-                        (binding_id, version_number, original_filename, stored_filename,
-                         storage_path, mime_type, size_bytes, sha256, created_at, note,
-                         storage_backend)
-                    VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 'local')
+                    INSERT INTO qr_aliases
+                        (public_token, display_code, label, resource_id,
+                         resolve_mode, pinned_revision_id, status,
+                         created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 'latest', NULL, 'active', ?, ?)
                     """,
-                    (
-                        binding_id,
-                        stored.original_filename,
-                        stored.stored_filename,
-                        stored.relative_path,
-                        stored.mime_type,
-                        stored.size_bytes,
-                        stored.sha256,
-                        now,
-                        metadata["note"],
-                    ),
+                    (qr_id, display_code, metadata["title"], resource_id, now, now),
                 )
                 connection.execute(
-                    "UPDATE bindings SET current_version_id = ? WHERE id = ?",
-                    (int(version_cursor.lastrowid), binding_id),
+                    """
+                    INSERT INTO audit_events
+                        (event_type, resource_id, revision_id, qr_alias_id,
+                         actor, summary, created_at)
+                    VALUES ('create_resource', ?, ?, ?, 'legacy-api', ?, ?)
+                    """,
+                    (
+                        resource_id, revision_id, int(alias_cursor.lastrowid),
+                        "通过兼容流程创建资料并立即发布首个版本", now,
+                    ),
                 )
         except Exception:
             self.storage.delete(stored.relative_path)
             raise
 
-        logger.info("binding created qr_id=%s version=1", qr_id)
+        logger.info("answer resource created public_token=%s version=1", qr_id)
         return self.get_binding(qr_id)
 
     async def replace_file(
@@ -272,48 +311,19 @@ class BindingService:
             stored = self._validate_binding_file(stored)
             now = utc_now_iso()
             with self.database.transaction() as connection:
-                current = connection.execute(
-                    "SELECT id, is_active FROM bindings WHERE id = ?", (binding["id"],)
-                ).fetchone()
-                if current is None:
-                    raise AppError(404, "BINDING_NOT_FOUND", "binding does not exist")
-                if not current["is_active"]:
-                    raise AppError(410, "BINDING_INACTIVE", "binding is inactive")
-                version_number = int(
-                    connection.execute(
-                        "SELECT COALESCE(MAX(version_number), 0) + 1 "
-                        "FROM file_versions WHERE binding_id = ?",
-                        (binding["id"],),
-                    ).fetchone()[0]
-                )
-                cursor = connection.execute(
-                    """
-                    INSERT INTO file_versions
-                        (binding_id, version_number, original_filename, stored_filename,
-                         storage_path, mime_type, size_bytes, sha256, created_at, note,
-                         storage_backend)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'local')
-                    """,
-                    (
-                        binding["id"],
-                        version_number,
-                        stored.original_filename,
-                        stored.stored_filename,
-                        stored.relative_path,
-                        stored.mime_type,
-                        stored.size_bytes,
-                        stored.sha256,
-                        now,
-                        note,
-                    ),
+                revision_id, version_number = self.revision_service.create_published(
+                    connection, binding["id"], stored, note, now
                 )
                 connection.execute(
                     """
-                    UPDATE bindings
-                    SET current_version_id = ?, updated_at = ?
-                    WHERE id = ?
+                    INSERT INTO audit_events
+                        (event_type, resource_id, revision_id, actor, summary, created_at)
+                    VALUES ('legacy_immediate_publish', ?, ?, 'legacy-api', ?, ?)
                     """,
-                    (int(cursor.lastrowid), now, binding["id"]),
+                    (
+                        binding["id"], revision_id,
+                        f"兼容替换流程立即发布第 {version_number} 版", now,
+                    ),
                 )
         except Exception:
             self.storage.delete(stored.relative_path)
@@ -321,143 +331,146 @@ class BindingService:
 
         self._cleanup_old_versions(binding["id"])
         logger.info(
-            "binding file replaced qr_id=%s version=%s", qr_id, version_number
+            "answer revision replaced public_token=%s version=%s", qr_id, version_number
         )
         return self.get_binding(qr_id)
 
-    def _cleanup_old_versions(self, binding_id: int) -> None:
+    def _cleanup_old_versions(self, resource_id: int) -> None:
         while True:
             with self.database.read() as connection:
-                binding = connection.execute(
-                    "SELECT current_version_id FROM bindings WHERE id = ?", (binding_id,)
+                resource = connection.execute(
+                    "SELECT current_published_revision_id FROM answer_resources WHERE id = ?",
+                    (resource_id,),
                 ).fetchone()
+                if resource is None:
+                    return
                 count = int(
                     connection.execute(
                         """
-                        SELECT COUNT(*) FROM file_versions v
-                        WHERE v.binding_id = ? AND NOT EXISTS (
-                            SELECT 1 FROM version_references r WHERE r.version_id = v.id
+                        SELECT COUNT(*) FROM answer_revisions v
+                        WHERE v.resource_id = ? AND NOT EXISTS (
+                            SELECT 1 FROM revision_references r
+                            WHERE r.revision_id = v.id
                         )
                         """,
-                        (binding_id,),
+                        (resource_id,),
                     ).fetchone()[0]
                 )
                 if count <= self.settings.max_binding_versions:
                     return
                 candidate = connection.execute(
                     """
-                    SELECT v.id, v.storage_path FROM file_versions v
-                    WHERE v.binding_id = ? AND v.id != ? AND NOT EXISTS (
-                        SELECT 1 FROM version_references r WHERE r.version_id = v.id
+                    SELECT v.id, v.asset_id, a.storage_key
+                    FROM answer_revisions v
+                    JOIN assets a ON a.id = v.asset_id
+                    WHERE v.resource_id = ? AND v.id != ? AND NOT EXISTS (
+                        SELECT 1 FROM revision_references r
+                        WHERE r.revision_id = v.id
                     )
-                    ORDER BY version_number ASC
+                    ORDER BY v.revision_number ASC
                     LIMIT 1
                     """,
-                    (binding_id, binding["current_version_id"]),
+                    (resource_id, resource["current_published_revision_id"]),
                 ).fetchone()
             if candidate is None:
-                logger.error("version cleanup found no removable version binding_id=%s", binding_id)
+                logger.error(
+                    "revision cleanup found no removable revision resource_id=%s",
+                    resource_id,
+                )
                 return
 
             try:
-                trash_path = self.storage.move_to_trash(candidate["storage_path"])
+                trash_path = self.storage.move_to_trash(candidate["storage_key"])
             except Exception:
                 logger.exception(
-                    "version cleanup could not move file binding_id=%s version_id=%s",
-                    binding_id,
+                    "revision cleanup could not move asset resource_id=%s revision_id=%s",
+                    resource_id,
                     candidate["id"],
                 )
                 return
 
+            delete_asset = False
             try:
                 with self.database.transaction() as connection:
                     current = connection.execute(
-                        "SELECT current_version_id FROM bindings WHERE id = ?",
-                        (binding_id,),
+                        "SELECT current_published_revision_id FROM answer_resources WHERE id = ?",
+                        (resource_id,),
                     ).fetchone()
-                    if current["current_version_id"] == candidate["id"]:
+                    if current["current_published_revision_id"] == candidate["id"]:
                         raise RuntimeError("cleanup candidate became current")
+                    if connection.execute(
+                        "SELECT 1 FROM revision_references WHERE revision_id = ?",
+                        (candidate["id"],),
+                    ).fetchone():
+                        raise RuntimeError("cleanup candidate became referenced")
                     connection.execute(
-                        "DELETE FROM file_versions WHERE id = ? AND binding_id = ?",
-                        (candidate["id"], binding_id),
+                        "DELETE FROM answer_revisions WHERE id = ? AND resource_id = ?",
+                        (candidate["id"], resource_id),
                     )
+                    delete_asset = not self.asset_service.is_referenced(
+                        connection, candidate["asset_id"]
+                    )
+                    if delete_asset:
+                        connection.execute(
+                            "DELETE FROM assets WHERE id = ?", (candidate["asset_id"],)
+                        )
             except Exception:
-                self.storage.restore_from_trash(trash_path, candidate["storage_path"])
+                self.storage.restore_from_trash(trash_path, candidate["storage_key"])
                 logger.exception(
-                    "version cleanup database update failed binding_id=%s version_id=%s",
-                    binding_id,
+                    "revision cleanup database update failed resource_id=%s revision_id=%s",
+                    resource_id,
                     candidate["id"],
                 )
                 return
 
-            try:
-                self.storage.delete(trash_path)
-            except Exception:
-                logger.exception(
-                    "version cleanup left trash file binding_id=%s version_id=%s",
-                    binding_id,
-                    candidate["id"],
-                )
+            if delete_asset:
+                try:
+                    self.storage.delete(trash_path)
+                except Exception:
+                    logger.exception(
+                        "revision cleanup left trash asset resource_id=%s revision_id=%s",
+                        resource_id,
+                        candidate["id"],
+                    )
+            else:
+                self.storage.restore_from_trash(trash_path, candidate["storage_key"])
 
     def list_versions(
         self, qr_id: str, allow_inactive: bool = False
     ) -> list[dict[str, Any]]:
         binding = self._binding_row(qr_id, allow_inactive)
-        with self.database.read() as connection:
-            rows = connection.execute(
-                """
-                SELECT v.*, EXISTS(
-                    SELECT 1 FROM version_references r WHERE r.version_id = v.id
-                ) AS is_pinned
-                FROM file_versions v
-                WHERE v.binding_id = ?
-                ORDER BY version_number DESC
-                """,
-                (binding["id"],),
-            ).fetchall()
-        return [self._version_out(row, binding["current_version_id"]) for row in rows]
+        rows = self.revision_service.list(binding["id"])
+        return [self._version_out(row, binding["version_id"]) for row in rows]
 
     def rollback(self, qr_id: str, version_id: int) -> dict[str, Any]:
         binding = self._binding_row(qr_id)
-        with self.database.read() as connection:
-            target = connection.execute(
-                "SELECT * FROM file_versions WHERE id = ? AND binding_id = ?",
-                (version_id, binding["id"]),
-            ).fetchone()
-        if target is None:
-            raise AppError(404, "VERSION_NOT_FOUND", "version does not exist")
-        self.storage.resolve(target["storage_path"])
-        now = utc_now_iso()
+        self.revision_service.switch_current(binding["id"], version_id)
         with self.database.transaction() as connection:
             connection.execute(
                 """
-                UPDATE bindings
-                SET current_version_id = ?, updated_at = ?
-                WHERE id = ?
+                INSERT INTO audit_events
+                    (event_type, resource_id, revision_id, actor, summary, created_at)
+                VALUES ('legacy_republish', ?, ?, 'legacy-api', ?, ?)
                 """,
-                (version_id, now, binding["id"]),
+                (binding["id"], version_id, "兼容回滚流程重新发布历史版本", utc_now_iso()),
             )
-        logger.info("binding rolled back qr_id=%s version_id=%s", qr_id, version_id)
+        logger.info("answer revision republished public_token=%s revision_id=%s", qr_id, version_id)
         return self.get_binding(qr_id)
 
     def current_file(self, qr_id: str) -> tuple[Path, str, str]:
-        binding = self._binding_row(qr_id)
-        path = self.storage.resolve(binding["storage_path"])
-        return path, binding["original_filename"], binding["mime_type"]
+        resolved = self.resolver_service.resolve_latest(qr_id)
+        return (
+            self.asset_service.path(resolved.asset),
+            resolved.asset["original_filename"],
+            resolved.asset["mime_type"],
+        )
 
     def version_file(self, qr_id: str, version_id: int) -> tuple[Path, str, str]:
-        binding = self._binding_row(qr_id)
-        with self.database.read() as connection:
-            version = connection.execute(
-                "SELECT * FROM file_versions WHERE id = ? AND binding_id = ?",
-                (version_id, binding["id"]),
-            ).fetchone()
-        if version is None:
-            raise AppError(404, "VERSION_NOT_FOUND", "version does not exist")
+        resolved = self.resolver_service.resolve_revision(qr_id, version_id)
         return (
-            self.storage.resolve(version["storage_path"]),
-            version["original_filename"],
-            version["mime_type"],
+            self.asset_service.path(resolved.asset),
+            resolved.asset["original_filename"],
+            resolved.asset["mime_type"],
         )
 
     def pin_version(
@@ -468,21 +481,19 @@ class BindingService:
         source_job_id: str = "",
     ) -> None:
         binding = self._binding_row(qr_id)
-        with self.database.transaction() as connection:
-            version = connection.execute(
-                "SELECT id FROM file_versions WHERE id = ? AND binding_id = ?",
-                (version_id, binding["id"]),
-            ).fetchone()
-            if version is None:
-                raise AppError(404, "VERSION_NOT_FOUND", "version does not exist")
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO version_references
-                    (version_id, reference_type, source_job_id, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (version_id, reference_type, source_job_id, utc_now_iso()),
-            )
+        mapped = {
+            "fixed_qr": "manual_pin",
+            "qr_download": "manual_pin",
+            "pdf_job": "pdf_job_fixed",
+            "pdf_job_fixed": "pdf_job_fixed",
+            "manual_pin": "manual_pin",
+            "legacy_fixed_link": "legacy_fixed_link",
+        }.get(reference_type)
+        if mapped is None:
+            raise ValueError("unsupported revision reference type")
+        self.revision_service.pin(
+            binding["id"], version_id, mapped, source_job_id
+        )
 
     def current_version_id(self, qr_id: str) -> int:
         return int(self._binding_row(qr_id)["version_id"])
@@ -496,46 +507,9 @@ class BindingService:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[dict[str, Any]], int]:
-        clauses = ["1 = 1"]
-        parameters: list[Any] = []
-        if search.strip():
-            clauses.append(
-                "(b.title LIKE ? OR b.display_code LIKE ? OR v.original_filename LIKE ? "
-                "OR b.textbook_version LIKE ? OR b.chapter LIKE ?)"
-            )
-            pattern = f"%{search.strip()}%"
-            parameters.extend([pattern] * 5)
-        if grade:
-            clauses.append("b.grade = ?")
-            parameters.append(grade)
-        if subject:
-            clauses.append("b.subject = ?")
-            parameters.append(subject)
-        if status in {"active", "inactive"}:
-            clauses.append("b.is_active = ?")
-            parameters.append(1 if status == "active" else 0)
-        where = " AND ".join(clauses)
-        with self.database.read() as connection:
-            total = int(
-                connection.execute(
-                    f"""SELECT COUNT(*) FROM bindings b
-                    LEFT JOIN file_versions v ON v.id = b.current_version_id
-                    WHERE {where}""",
-                    parameters,
-                ).fetchone()[0]
-            )
-            rows = connection.execute(
-                f"""
-                SELECT b.*, v.original_filename, v.version_number, v.size_bytes
-                FROM bindings b
-                LEFT JOIN file_versions v ON v.id = b.current_version_id
-                WHERE {where}
-                ORDER BY b.updated_at DESC
-                LIMIT ? OFFSET ?
-                """,
-                [*parameters, page_size, (max(page, 1) - 1) * page_size],
-            ).fetchall()
-        return [dict(row) for row in rows], total
+        return self.resource_service.list_materials(
+            search, grade, subject, status, page, page_size
+        )
 
     def update_metadata(
         self,
@@ -551,31 +525,10 @@ class BindingService:
         metadata = self._clean_metadata(
             title, grade, subject, textbook_version, chapter, note
         )
-        with self.database.transaction() as connection:
-            connection.execute(
-                """
-                UPDATE bindings SET title = ?, grade = ?, subject = ?,
-                    textbook_version = ?, chapter = ?, note = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    metadata["title"], metadata["grade"], metadata["subject"],
-                    metadata["textbook_version"], metadata["chapter"],
-                    metadata["note"], utc_now_iso(), binding["id"],
-                ),
-            )
+        self.resource_service.update_metadata(binding["id"], metadata)
         return self.get_binding(qr_id)
 
     def set_active(self, qr_id: str, active: bool) -> dict[str, Any]:
-        with self.database.read() as connection:
-            row = connection.execute(
-                "SELECT id FROM bindings WHERE qr_id = ?", (qr_id,)
-            ).fetchone()
-        if row is None:
-            raise AppError(404, "BINDING_NOT_FOUND", "binding does not exist")
-        with self.database.transaction() as connection:
-            connection.execute(
-                "UPDATE bindings SET is_active = ?, updated_at = ? WHERE id = ?",
-                (1 if active else 0, utc_now_iso(), row["id"]),
-            )
+        resolved = self.resolver_service.resolve_latest(qr_id, allow_inactive=True)
+        self.resource_service.set_active(resolved.resource["id"], active)
         return self.get_binding(qr_id) if active else {"qr_id": qr_id, "is_active": False}

@@ -7,7 +7,7 @@ def test_health_and_capabilities(client):
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "ok"
-    assert payload["database"]["schema_version"] == 2
+    assert payload["database"]["schema_version"] == 3
     assert payload["configuration"]["max_binding_versions"] == 5
     assert all(payload["storage"].values())
 

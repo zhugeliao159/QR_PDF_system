@@ -20,6 +20,12 @@ from app.database import Database
 from app.errors import AppError
 from app.routers import bindings, health, pdf_jobs, redirects
 from app.services.binding_service import BindingService
+from app.services.decoupled import (
+    AnswerResourceService,
+    AnswerRevisionService,
+    AssetService,
+    QrResolverService,
+)
 from app.services.pdf_service import PdfService
 from app.services.qr_service import QrService
 from app.storage.local import LocalStorageBackend
@@ -43,8 +49,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         storage = LocalStorageBackend(configured_settings)
         storage.ensure_directories()
         qr_service = QrService(configured_settings.public_base_url)
+        asset_service = AssetService(database, storage)
+        resource_service = AnswerResourceService(database)
+        revision_service = AnswerRevisionService(database, asset_service)
+        resolver_service = QrResolverService(database)
         binding_service = BindingService(
-            configured_settings, database, storage, qr_service
+            configured_settings,
+            database,
+            storage,
+            qr_service,
+            resource_service,
+            revision_service,
+            asset_service,
+            resolver_service,
         )
         pdf_service = PdfService(
             configured_settings, database, storage, binding_service, qr_service
@@ -52,6 +69,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.database = database
         application.state.storage = storage
         application.state.qr_service = qr_service
+        application.state.asset_service = asset_service
+        application.state.resource_service = resource_service
+        application.state.revision_service = revision_service
+        application.state.resolver_service = resolver_service
         application.state.binding_service = binding_service
         application.state.pdf_service = pdf_service
         yield

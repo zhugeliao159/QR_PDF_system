@@ -1,6 +1,6 @@
 # 练习册二维码管理系统
 
-这是一个面向机构管理员的内部原型：上传答案或讲解资料，生成动态或固定版本二维码，并把二维码添加到练习册 PDF。第三阶段提供中文管理后台、管理员认证、资料版本管理和目标页预览。
+这是一个面向机构管理员的内部原型：上传答案或讲解资料，生成动态或固定版本二维码，并把二维码添加到练习册 PDF。Stage 4A 已把二维码入口、答案资料、答案版本和物理资产解耦，同时保持第三阶段的中文后台与旧入口兼容。
 
 ## 当前状态
 
@@ -8,7 +8,8 @@
 - 健康检查：<http://192.168.100.20:18081/health>
 - QuickDrop：<http://127.0.0.1:18080>
 - 当前分支：`main`
-- 自动化测试：`57 passed, 0 failed, 0 skipped`
+- 数据库 schema：`3`
+- 自动化测试：`65 passed, 0 failed, 0 skipped`
 
 仓库默认配置只监听服务器 `127.0.0.1`。经用户确认，当前部署已临时切换为 `192.168.100.20:18081` 局域网测试模式；同一机构 Wi-Fi 内的手机可以扫码测试，但地址依赖当前网络，不得用于正式印刷。
 
@@ -114,7 +115,7 @@ docker compose up -d --force-recreate --no-deps pdf-worker
 - 上传的练习册：`data/pdf-worker/storage/source-pdfs/`
 - 生成的练习册：`data/pdf-worker/storage/generated-pdfs/`
 
-数据库启动时执行幂等 migration。版本 1 升级到版本 2 前会使用 SQLite backup API 生成备份，原有二维码、版本和 PDF job 不会被删除。
+数据库启动时执行幂等 migration。版本 1 升级到版本 2、版本 2 升级到版本 3 前都会使用 SQLite Backup API 生成备份。schema 3 新增解耦业务表，旧表保留只读，原有二维码、版本、文件和 PDF job 不会被删除。
 
 一致性整库备份建议先停止服务：
 
@@ -134,7 +135,7 @@ docker compose --profile test build pdf-worker-tests
 docker compose --profile test run --rm pdf-worker-tests
 ```
 
-第三阶段最终结果为 `57 passed, 0 failed, 0 skipped`。
+Stage 4A 最终结果为 `65 passed, 0 failed, 0 skipped`。
 
 ## 安全边界
 
@@ -152,8 +153,11 @@ docker compose --profile test run --rm pdf-worker-tests
 - [网络模式指南](docs/stage_03_network_guide.md)
 - [第三阶段报告](docs/stage_03_report.md)
 - [第三阶段交接](docs/handoff_stage_03.md)
+- [Stage 4A 迁移报告](docs/stage_04a_migration_report.md)
+- [Stage 4A 数据映射](docs/stage_04a_data_mapping.md)
+- [Stage 4A 交接](docs/handoff_stage_04a.md)
 - [第二阶段 API 说明](docs/stage_02_api.md)
 
 ## 当前未实现
 
-多管理员和角色、审计日志、批量处理、多二维码、任意坐标、扫码统计、学生账号、公网域名和 HTTPS、自动备份恢复、监控告警及高可用仍不在第三阶段范围内。
+Stage 4B 的统一学生答案页、Stage 4C 的草稿发布、Stage 4D 的图片与受控外部 URL 尚未完成。多管理员和角色、审计查询界面、批量处理、扫码统计、学生账号、公网域名和 HTTPS、自动恢复、监控告警及高可用也仍未实现。

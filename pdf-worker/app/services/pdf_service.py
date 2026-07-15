@@ -209,7 +209,7 @@ class PdfService:
     def _insert_processing_job(
         self,
         job_id: str,
-        binding_id: int,
+        resource_id: int,
         source: StoredObject,
         page: int,
         position: str,
@@ -222,15 +222,15 @@ class PdfService:
         with self.database.transaction() as connection:
             connection.execute(
                 """
-                INSERT INTO pdf_jobs
-                    (job_id, binding_id, qr_mode, qr_version_id,
+                INSERT INTO pdf_jobs_v2
+                    (job_id, resource_id, qr_mode, qr_revision_id,
                      source_original_filename, source_storage_path,
                      page_number, position, size_mm, margin_mm, status, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?)
                 """,
                 (
                     job_id,
-                    binding_id,
+                    resource_id,
                     qr_mode,
                     qr_version_id,
                     source.original_filename,
@@ -248,7 +248,7 @@ class PdfService:
             with self.database.transaction() as connection:
                 connection.execute(
                     """
-                    UPDATE pdf_jobs
+                    UPDATE pdf_jobs_v2
                     SET status = 'failed', error_code = ?, error_message = ?,
                         completed_at = ?
                     WHERE job_id = ?
@@ -314,7 +314,7 @@ class PdfService:
             with self.database.transaction() as connection:
                 connection.execute(
                     """
-                    UPDATE pdf_jobs
+                    UPDATE pdf_jobs_v2
                     SET status = 'completed', output_storage_path = ?,
                         output_size_bytes = ?, output_sha256 = ?, completed_at = ?
                     WHERE job_id = ?
@@ -330,9 +330,9 @@ class PdfService:
                 if qr_version_id is not None:
                     connection.execute(
                         """
-                        INSERT OR IGNORE INTO version_references
-                            (version_id, reference_type, source_job_id, created_at)
-                        VALUES (?, 'pdf_job', ?, ?)
+                        INSERT OR IGNORE INTO revision_references
+                            (revision_id, reference_type, source_job_id, created_at)
+                        VALUES (?, 'pdf_job_fixed', ?, ?)
                         """,
                         (qr_version_id, job_id, utc_now_iso()),
                     )
@@ -368,9 +368,12 @@ class PdfService:
         with self.database.read() as connection:
             row = connection.execute(
                 """
-                SELECT j.*, b.qr_id
-                FROM pdf_jobs j
-                JOIN bindings b ON b.id = j.binding_id
+                SELECT j.*, j.qr_revision_id AS qr_version_id,
+                       q.public_token AS qr_id
+                FROM pdf_jobs_v2 j
+                JOIN answer_resources r ON r.id = j.resource_id
+                JOIN qr_aliases q
+                  ON q.resource_id = r.id AND q.resolve_mode = 'latest'
                 WHERE j.job_id = ?
                 """,
                 (job_id,),
@@ -403,7 +406,7 @@ class PdfService:
             "created_at": row["created_at"],
             "completed_at": row["completed_at"],
             "qr_mode": row["qr_mode"],
-            "qr_version_id": row["qr_version_id"],
+            "qr_version_id": row["qr_revision_id"],
         }
 
     def download(self, job_id: str) -> tuple[Path, str]:
@@ -433,8 +436,12 @@ class PdfService:
         with self.database.read() as connection:
             rows = connection.execute(
                 """
-                SELECT j.*, b.qr_id, b.title, b.display_code
-                FROM pdf_jobs j JOIN bindings b ON b.id = j.binding_id
+                SELECT j.*, q.public_token AS qr_id,
+                       r.name AS title, r.display_code
+                FROM pdf_jobs_v2 j
+                JOIN answer_resources r ON r.id = j.resource_id
+                JOIN qr_aliases q
+                  ON q.resource_id = r.id AND q.resolve_mode = 'latest'
                 ORDER BY j.created_at DESC LIMIT ?
                 """,
                 (limit,),
