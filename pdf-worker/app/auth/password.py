@@ -12,14 +12,14 @@ DKLEN = 32
 
 
 def hash_password(password: str) -> str:
-    if len(password) < 12:
-        raise ValueError("password must contain at least 12 characters")
+    if len(password) < 16:
+        raise ValueError("password must contain at least 16 characters")
     salt = secrets.token_bytes(16)
     digest = hashlib.scrypt(
         password.encode("utf-8"), salt=salt, n=SCRYPT_N, r=SCRYPT_R,
         p=SCRYPT_P, dklen=DKLEN,
     )
-    return "$".join(
+    return ":".join(
         (
             "scrypt", str(SCRYPT_N), str(SCRYPT_R), str(SCRYPT_P),
             base64.urlsafe_b64encode(salt).decode("ascii").rstrip("="),
@@ -34,7 +34,8 @@ def _decode(value: str) -> bytes:
 
 def verify_password(password: str, encoded: str) -> bool:
     try:
-        algorithm, n, r, p, salt, expected = encoded.split("$")
+        delimiter = ":" if ":" in encoded else "$"
+        algorithm, n, r, p, salt, expected = encoded.split(delimiter)
         if algorithm != "scrypt":
             return False
         digest = hashlib.scrypt(
