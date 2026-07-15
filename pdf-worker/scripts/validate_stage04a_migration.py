@@ -95,20 +95,50 @@ def validate(database_path: Path, storage_root: Path) -> dict[str, Any]:
         counts.update(
             {
                 "legacy_bindings": _count(connection, "bindings"),
-                "answer_resources": _count(connection, "answer_resources"),
+                "answer_resources": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM answer_resources "
+                        "WHERE legacy_binding_id IS NOT NULL"
+                    ).fetchone()[0]
+                ),
+                "answer_resources_total": _count(connection, "answer_resources"),
                 "legacy_dynamic_qr": _count(connection, "bindings"),
                 "latest_qr_aliases": int(
                     connection.execute(
-                        "SELECT COUNT(*) FROM qr_aliases WHERE resolve_mode = 'latest'"
+                        "SELECT COUNT(*) FROM qr_aliases WHERE resolve_mode = 'latest' "
+                        "AND legacy_binding_id IS NOT NULL"
                     ).fetchone()[0]
                 ),
+                "qr_aliases_total": _count(connection, "qr_aliases"),
                 "legacy_file_versions": _count(connection, "file_versions"),
-                "answer_revisions": _count(connection, "answer_revisions"),
-                "assets": _count(connection, "assets"),
+                "answer_revisions": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM answer_revisions "
+                        "WHERE legacy_version_id IS NOT NULL"
+                    ).fetchone()[0]
+                ),
+                "answer_revisions_total": _count(connection, "answer_revisions"),
+                "assets": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM assets WHERE legacy_version_id IS NOT NULL"
+                    ).fetchone()[0]
+                ),
+                "assets_total": _count(connection, "assets"),
                 "legacy_version_references": _count(connection, "version_references"),
-                "revision_references": _count(connection, "revision_references"),
+                "revision_references": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM revision_references "
+                        "WHERE legacy_version_id IS NOT NULL"
+                    ).fetchone()[0]
+                ),
+                "revision_references_total": _count(connection, "revision_references"),
                 "legacy_pdf_jobs": _count(connection, "pdf_jobs"),
-                "pdf_jobs_v2": _count(connection, "pdf_jobs_v2"),
+                "pdf_jobs_v2": int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM pdf_jobs_v2 WHERE legacy_job_id IS NOT NULL"
+                    ).fetchone()[0]
+                ),
+                "pdf_jobs_v2_total": _count(connection, "pdf_jobs_v2"),
             }
         )
 

@@ -19,6 +19,13 @@ class ResolvedAnswer:
     asset: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class ResolvedContent:
+    resource: dict[str, Any]
+    revision: dict[str, Any]
+    asset: dict[str, Any]
+
+
 class AssetService:
     def __init__(self, database: Database, storage: StorageBackend) -> None:
         self.database = database
@@ -397,7 +404,7 @@ class QrResolverService:
         revision_id: int | None,
     ) -> ResolvedAnswer:
         if revision_id is None:
-            raise AppError(409, "CURRENT_VERSION_MISSING", "current version is unavailable")
+            raise AppError(503, "CURRENT_VERSION_MISSING", "current version is unavailable")
         with self.database.read() as connection:
             row = connection.execute(
                 """
@@ -412,6 +419,8 @@ class QrResolverService:
             ).fetchone()
         if row is None:
             raise AppError(404, "VERSION_NOT_FOUND", "version does not exist")
+        if row["status"] != "published":
+            raise AppError(404, "PUBLISHED_VERSION_MISSING", "published version is unavailable")
         if row["target_type"] != "file" or row["asset_id"] is None:
             raise AppError(409, "VERSION_TARGET_UNSUPPORTED", "version target is unsupported")
         if row["asset_key"] is None:
@@ -456,3 +465,151 @@ class QrResolverService:
     ) -> ResolvedAnswer:
         alias, resource = self._alias_and_resource(public_token, allow_inactive)
         return self._resolved(alias, resource, revision_id)
+
+    def resolve_content(self, revision_key: str) -> ResolvedContent:
+        with self.database.read() as connection:
+            row = connection.execute(
+                """
+                SELECT v.*, r.resource_key, r.name, r.display_code,
+                       r.grade, r.subject, r.textbook_version, r.chapter,
+                       r.note AS resource_note,
+                       r.current_published_revision_id, r.status AS resource_status,
+                       r.row_version, r.created_at AS resource_created_at,
+                       r.updated_at AS resource_updated_at,
+                       a.asset_key, a.storage_backend, a.storage_key,
+                       a.original_filename, a.mime_type, a.size_bytes, a.sha256,
+                       a.created_at AS asset_created_at
+                FROM answer_revisions v
+                JOIN answer_resources r ON r.id = v.resource_id
+                LEFT JOIN assets a ON a.id = v.asset_id
+                WHERE v.revision_key = ?
+                """,
+                (revision_key,),
+            ).fetchone()
+        if row is None:
+            raise AppError(404, "VERSION_NOT_FOUND", "version does not exist")
+        if row["resource_status"] != "active":
+            raise AppError(410, "BINDING_INACTIVE", "binding is inactive")
+        if row["status"] != "published":
+            raise AppError(404, "PUBLISHED_VERSION_MISSING", "published version is unavailable")
+        if row["target_type"] != "file" or row["asset_id"] is None:
+            raise AppError(404, "VERSION_TARGET_UNSUPPORTED", "version target is unsupported")
+        if row["asset_key"] is None:
+            raise AppError(503, "ASSET_MISSING", "answer asset does not exist")
+        resource = {
+            "id": row["resource_id"],
+            "resource_key": row["resource_key"],
+            "name": row["name"],
+            "display_code": row["display_code"],
+            "grade": row["grade"],
+            "subject": row["subject"],
+            "textbook_version": row["textbook_version"],
+            "chapter": row["chapter"],
+            "note": row["resource_note"],
+            "current_published_revision_id": row["current_published_revision_id"],
+            "status": row["resource_status"],
+            "row_version": row["row_version"],
+            "created_at": row["resource_created_at"],
+            "updated_at": row["resource_updated_at"],
+        }
+        revision = {
+            key: row[key]
+            for key in (
+                "id", "revision_key", "resource_id", "revision_number",
+                "target_type", "asset_id", "external_url", "status",
+                "change_note", "created_at", "published_at", "legacy_version_id",
+            )
+        }
+        asset = {
+            "id": row["asset_id"],
+            "asset_key": row["asset_key"],
+            "storage_backend": row["storage_backend"],
+            "storage_key": row["storage_key"],
+            "original_filename": row["original_filename"],
+            "mime_type": row["mime_type"],
+            "size_bytes": row["size_bytes"],
+            "sha256": row["sha256"],
+            "created_at": row["asset_created_at"],
+        }
+        return ResolvedContent(resource, revision, asset)
+
+    def get_or_create_pinned_alias(
+        self,
+        resource_id: int,
+        revision_id: int,
+        label: str | None = None,
+        source_job_id: str = "",
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        with self.database.transaction() as connection:
+            revision = connection.execute(
+                """
+                SELECT id, status FROM answer_revisions
+                WHERE id = ? AND resource_id = ?
+                """,
+                (revision_id, resource_id),
+            ).fetchone()
+            if revision is None:
+                raise AppError(404, "VERSION_NOT_FOUND", "version does not exist")
+            if revision["status"] != "published":
+                raise AppError(409, "VERSION_NOT_PUBLISHED", "version is not published")
+            existing = connection.execute(
+                """
+                SELECT * FROM qr_aliases
+                WHERE resource_id = ? AND resolve_mode = 'pinned'
+                  AND pinned_revision_id = ? AND status = 'active'
+                ORDER BY id LIMIT 1
+                """,
+                (resource_id, revision_id),
+            ).fetchone()
+            if existing is not None:
+                alias = dict(existing)
+            else:
+                display_code = self.database._unique_display_code(
+                    connection, "qr_aliases"
+                )
+                cursor = connection.execute(
+                    """
+                    INSERT INTO qr_aliases
+                        (public_token, display_code, label, resource_id,
+                         resolve_mode, pinned_revision_id, status,
+                         created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 'pinned', ?, 'active', ?, ?)
+                    """,
+                    (
+                        new_public_key(), display_code, label, resource_id,
+                        revision_id, now, now,
+                    ),
+                )
+                alias = dict(
+                    connection.execute(
+                        "SELECT * FROM qr_aliases WHERE id = ?",
+                        (int(cursor.lastrowid),),
+                    ).fetchone()
+                )
+                connection.execute(
+                    """
+                    INSERT INTO audit_events
+                        (event_type, resource_id, revision_id, qr_alias_id,
+                         actor, summary, created_at)
+                    VALUES ('create_pinned_alias', ?, ?, ?, 'legacy-api', ?, ?)
+                    """,
+                    (
+                        resource_id, revision_id, alias["id"],
+                        "创建锁定版本二维码入口", now,
+                    ),
+                )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO revision_references
+                    (revision_id, reference_type, source_job_id, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    revision_id,
+                    "pdf_job_fixed" if source_job_id else "manual_pin",
+                    source_job_id,
+                    now,
+                ),
+            )
+        return alias

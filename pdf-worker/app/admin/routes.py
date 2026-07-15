@@ -166,10 +166,13 @@ def admin_dynamic_qr(request: Request, qr_id: str):
 @router.get("/materials/{qr_id}/versions/{version_id}/qr.png")
 def admin_fixed_qr(request: Request, qr_id: str, version_id: int):
     material = request.app.state.binding_service.get_binding(qr_id, allow_inactive=True)
-    request.app.state.binding_service.pin_version(qr_id, version_id, "qr_download")
+    public_token = request.app.state.binding_service.fixed_alias_token(qr_id, version_id)
     return Response(
-        request.app.state.qr_service.fixed_png(qr_id, version_id), media_type="image/png",
-        headers={"Content-Disposition": f'attachment; filename="{material["display_code"]}-V{version_id}.png"'},
+        request.app.state.qr_service.fixed_png(public_token), media_type="image/png",
+        headers={
+            "Content-Disposition": f'attachment; filename="{material["display_code"]}-V{version_id}.png"',
+            "Content-Location": request.app.state.qr_service.fixed_url(public_token),
+        },
     )
 
 

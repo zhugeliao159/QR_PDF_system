@@ -11,13 +11,16 @@ class QrService:
         self.public_base_url = public_base_url.rstrip("/")
 
     def qr_url(self, qr_id: str) -> str:
+        return f"{self.public_base_url}/q/{qr_id}"
+
+    def legacy_url(self, qr_id: str) -> str:
         return f"{self.public_base_url}/r/{qr_id}"
 
     def qr_png_url(self, qr_id: str) -> str:
         return f"{self.public_base_url}/bindings/{qr_id}/qr.png"
 
-    def fixed_url(self, qr_id: str, version_id: int) -> str:
-        return f"{self.public_base_url}/r/{qr_id}/versions/{version_id}"
+    def fixed_url(self, public_token: str) -> str:
+        return self.qr_url(public_token)
 
     def fixed_qr_png_url(self, qr_id: str, version_id: int) -> str:
         return (
@@ -42,5 +45,5 @@ class QrService:
     def png(self, qr_id: str) -> bytes:
         return self.png_for_url(self.qr_url(qr_id))
 
-    def fixed_png(self, qr_id: str, version_id: int) -> bytes:
-        return self.png_for_url(self.fixed_url(qr_id, version_id))
+    def fixed_png(self, public_token: str) -> bytes:
+        return self.png_for_url(self.fixed_url(public_token))

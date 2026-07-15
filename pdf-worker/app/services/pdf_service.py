@@ -272,13 +272,15 @@ class PdfService:
         if qr_mode not in {"dynamic", "fixed"}:
             raise AppError(422, "INVALID_QR_MODE", "qr_mode must be dynamic or fixed")
         binding = self.binding_service._binding_row(qr_id)
-        qr_version_id = int(binding["version_id"]) if qr_mode == "fixed" else None
-        qr_url = (
-            self.qr_service.fixed_url(qr_id, qr_version_id)
-            if qr_version_id is not None
-            else self.qr_service.qr_url(qr_id)
-        )
         job_id = uuid.uuid4().hex
+        qr_version_id = int(binding["version_id"]) if qr_mode == "fixed" else None
+        if qr_version_id is not None:
+            pinned_token = self.binding_service.fixed_alias_token(
+                qr_id, qr_version_id, job_id
+            )
+            qr_url = self.qr_service.fixed_url(pinned_token)
+        else:
+            qr_url = self.qr_service.qr_url(qr_id)
         source = await self.storage.save_source_pdf(
             upload, job_id, self.settings.max_upload_size_bytes
         )

@@ -18,7 +18,7 @@ from app.auth.session import SessionManager
 from app.config import Settings
 from app.database import Database
 from app.errors import AppError
-from app.routers import bindings, health, pdf_jobs, redirects
+from app.routers import bindings, health, pdf_jobs, redirects, student
 from app.services.binding_service import BindingService
 from app.services.decoupled import (
     AnswerResourceService,
@@ -124,6 +124,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     def html_error(request: Request, status: int, message: str) -> HTMLResponse:
+        if request.url.path.startswith(("/q/", "/content/")):
+            return application.state.templates.TemplateResponse(
+                request,
+                "student/error.html",
+                {
+                    "request": request,
+                    "site_name": configured_settings.site_name,
+                    "title": "解析暂时无法打开",
+                    "message": message,
+                },
+                status_code=status,
+                headers={"Cache-Control": "no-store, must-revalidate"},
+            )
         title = "页面已过期" if status == 403 else "操作未完成"
         if request.url.path.startswith("/r/") and status == 410:
             title, message = "资料暂时不可用", "该解析资料暂时不可用。"
@@ -143,8 +156,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError):
-        if request.url.path.startswith("/admin") or request.url.path.startswith("/r/"):
-            return html_error(request, exc.status_code, chinese_error(exc.code, exc.message))
+        if request.url.path.startswith(("/admin", "/r/", "/q/", "/content/")):
+            student_messages = {
+                "BINDING_NOT_FOUND": "没有找到对应的解析资料，请确认二维码是否完整。",
+                "BINDING_INACTIVE": "该解析资料暂时不可用。",
+                "CURRENT_VERSION_MISSING": "这份解析暂未发布，请稍后再试。",
+                "PUBLISHED_VERSION_MISSING": "这份解析暂未发布，请稍后再试。",
+                "ASSET_MISSING": "解析文件暂时无法打开，请稍后重试。",
+                "STORED_FILE_MISSING": "解析文件暂时无法打开，请稍后重试。",
+            }
+            message = student_messages.get(exc.code, chinese_error(exc.code, exc.message))
+            status_code = 503 if exc.code in {"ASSET_MISSING", "STORED_FILE_MISSING"} else exc.status_code
+            return html_error(request, status_code, message)
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": {"code": exc.code, "message": exc.message, "details": exc.details}},
@@ -166,7 +189,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception):
         logger.error("unhandled application error", exc_info=(type(exc), exc, exc.__traceback__))
-        if request.url.path.startswith("/admin") or request.url.path.startswith("/r/"):
+        if request.url.path.startswith(("/admin", "/r/", "/q/", "/content/")):
             return html_error(
                 request, 500,
                 "系统处理失败，请稍后重试。如问题持续存在，请联系技术人员。",
@@ -178,7 +201,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.exception_handler(StarletteHTTPException)
     async def http_error_handler(request: Request, exc: StarletteHTTPException):
-        if request.url.path.startswith("/admin") or request.url.path.startswith("/r/"):
+        if request.url.path.startswith(("/admin", "/r/", "/q/", "/content/")):
             message = "没有找到这个页面。" if exc.status_code == 404 else "当前请求无法完成。"
             return html_error(request, exc.status_code, message)
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
@@ -190,6 +213,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(health.router)
     application.include_router(bindings.router)
     application.include_router(redirects.router)
+    application.include_router(student.router)
     application.include_router(pdf_jobs.router)
     application.include_router(admin_routes.router)
     return application

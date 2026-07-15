@@ -8,7 +8,7 @@ from conftest import create_binding, png_bytes
 def test_create_qr_and_permanent_file(client):
     binding = create_binding(client, png_bytes(), "answer.png")
     assert len(binding["qr_id"]) == 32
-    assert binding["qr_url"] == f"http://test.local:18081/r/{binding['qr_id']}"
+    assert binding["qr_url"] == f"http://test.local:18081/q/{binding['qr_id']}"
     assert binding["qr_png_url"].endswith(f"/bindings/{binding['qr_id']}/qr.png")
     assert binding["version_count"] == 1
     assert len(binding["sha256"]) == 64

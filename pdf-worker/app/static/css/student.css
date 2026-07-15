@@ -1,0 +1,60 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #17212b;
+  background: #eef2f4;
+  letter-spacing: 0;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: #eef2f4; }
+a, button { font: inherit; }
+
+.answer-shell {
+  width: min(100%, 980px);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: max(18px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  background: #fff;
+}
+
+.answer-heading { border-bottom: 1px solid #d8e0e5; padding-bottom: 16px; }
+.answer-code { margin: 0 0 6px; color: #1f6d55; font-size: 13px; font-weight: 700; }
+h1 { margin: 0; font-size: 25px; line-height: 1.3; overflow-wrap: anywhere; }
+.answer-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 10px 0 0; color: #53616c; font-size: 14px; }
+.version-line { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; margin-top: 12px; color: #3f4d57; font-size: 13px; }
+
+.content-section { margin-top: 16px; background: #e7ecef; border: 1px solid #ccd6dc; min-height: 58vh; }
+.pdf-viewer { display: block; width: 100%; height: 68vh; min-height: 480px; border: 0; background: #fff; }
+.preview-fallback, .file-fallback { display: grid; place-content: center; min-height: 58vh; padding: 28px; text-align: center; }
+.preview-fallback h2, .file-fallback h2 { margin: 0 0 8px; font-size: 19px; }
+.preview-fallback p, .file-fallback p { margin: 0 0 20px; color: #53616c; overflow-wrap: anywhere; }
+
+.answer-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+.primary-action, .secondary-action {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 10px 16px;
+  text-decoration: none;
+  font-weight: 700;
+  cursor: pointer;
+}
+.primary-action { background: #176b52; color: #fff; }
+.secondary-action { background: #fff; color: #1d3f56; border-color: #9eafb9; }
+.network-note { margin: 14px 0 0; color: #66747d; font-size: 13px; line-height: 1.6; }
+
+.error-shell { display: grid; align-content: center; justify-items: start; gap: 12px; max-width: 640px; }
+.error-shell h1, .error-shell p { margin: 0; }
+.error-shell p:not(.answer-code) { color: #53616c; line-height: 1.7; }
+
+@media (max-width: 560px) {
+  .answer-shell { padding-left: 12px; padding-right: 12px; }
+  h1 { font-size: 22px; }
+  .content-section { min-height: 62vh; }
+  .pdf-viewer { height: 66vh; min-height: 420px; }
+  .answer-actions { grid-template-columns: 1fr; }
+}

@@ -63,11 +63,16 @@ def rollback_binding(request: Request, qr_id: str, version_id: int) -> dict:
 def get_fixed_qr_png(
     request: Request, qr_id: str, version_id: int
 ) -> Response:
-    request.app.state.binding_service.pin_version(
-        qr_id, version_id, "qr_download"
+    public_token = request.app.state.binding_service.fixed_alias_token(
+        qr_id, version_id
     )
+    qr_url = request.app.state.qr_service.fixed_url(public_token)
     return Response(
-        content=request.app.state.qr_service.fixed_png(qr_id, version_id),
+        content=request.app.state.qr_service.fixed_png(public_token),
         media_type="image/png",
-        headers={"Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff"},
+        headers={
+            "Cache-Control": "public, max-age=3600",
+            "Content-Location": qr_url,
+            "X-Content-Type-Options": "nosniff",
+        },
     )

@@ -495,6 +495,18 @@ class BindingService:
             binding["id"], version_id, mapped, source_job_id
         )
 
+    def fixed_alias_token(
+        self, qr_id: str, version_id: int, source_job_id: str = ""
+    ) -> str:
+        resolved = self.resolver_service.resolve_revision(qr_id, version_id)
+        alias = self.resolver_service.get_or_create_pinned_alias(
+            resolved.resource["id"],
+            resolved.revision["id"],
+            f"{resolved.resource['name']} 第 {resolved.revision['revision_number']} 版",
+            source_job_id,
+        )
+        return str(alias["public_token"])
+
     def current_version_id(self, qr_id: str) -> int:
         return int(self._binding_row(qr_id)["version_id"])
 

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>{{ answer.resource_name }} - {{ site_name }}</title>
+  <link rel="stylesheet" href="/static/css/student.css">
+  <script defer src="/static/js/student.js"></script>
+</head>
+<body>
+  <main class="answer-shell">
+    <header class="answer-heading">
+      <p class="answer-code">{{ answer.display_code }}</p>
+      <h1>{{ answer.resource_name }}</h1>
+      {% if answer.grade != '未分类' or answer.subject != '未分类' or answer.chapter %}
+      <p class="answer-meta">
+        {% if answer.grade != '未分类' %}<span>{{ answer.grade }}</span>{% endif %}
+        {% if answer.subject != '未分类' %}<span>{{ answer.subject }}</span>{% endif %}
+        {% if answer.chapter %}<span>{{ answer.chapter }}</span>{% endif %}
+      </p>
+      {% endif %}
+      <div class="version-line">
+        <span>当前答案第 {{ answer.revision_number }} 版</span>
+        <time datetime="{{ answer.updated_at }}">更新于 {{ answer.updated_at[:10] }}</time>
+      </div>
+    </header>
+
+    <section class="content-section" aria-label="解析内容">
+      {% if answer.content_type == 'pdf' %}
+      <object class="pdf-viewer" data-student-content type="application/pdf">
+        <div class="preview-fallback">
+          <h2>当前浏览器无法直接显示 PDF</h2>
+          <p>请点击下方按钮打开解析文件。</p>
+          <a class="primary-action" data-content-link href="#">打开解析文件</a>
+        </div>
+      </object>
+      {% else %}
+      <div class="file-fallback">
+        <h2>解析文件已准备好</h2>
+        <p>{{ answer.original_filename }}</p>
+        <a class="primary-action" data-content-link href="#">打开解析文件</a>
+      </div>
+      {% endif %}
+    </section>
+
+    <nav class="answer-actions" aria-label="文件操作">
+      <a class="primary-action" data-content-link href="#" target="_blank" rel="noopener">全屏打开</a>
+      <a class="secondary-action" data-download-link href="#">下载文件</a>
+    </nav>
+    <p class="network-note">如果内容暂时无法显示，请检查网络后刷新页面，或使用“全屏打开”。</p>
+  </main>
+</body>
+</html>
