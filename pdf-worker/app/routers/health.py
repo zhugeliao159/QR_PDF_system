@@ -111,6 +111,19 @@ def capability_payload(request: Request) -> tuple[dict[str, Any], list[str]]:
             "max_binding_versions": settings.max_binding_versions,
             "default_qr_size_mm": settings.default_qr_size_mm,
             "default_qr_margin_mm": settings.default_qr_margin_mm,
+            "viewer_sessions": {
+                "ttl_minutes": settings.viewer_session_ttl_minutes,
+                "idle_minutes": settings.viewer_session_idle_minutes,
+                "rate_limit_enabled": settings.viewer_rate_limit_enabled,
+                "stores_full_ip": False,
+                "stores_raw_user_agent": False,
+            },
+            "watermark": {
+                "mode": "server_rendered_webp",
+                "configured_font_available": request.app.state.watermark_service.configured_font_available,
+                "chinese_available": request.app.state.watermark_service.chinese_watermark_available,
+                "fallback": "ASCII" if not request.app.state.watermark_service.chinese_watermark_available else None,
+            },
         },
     }
     return payload, errors

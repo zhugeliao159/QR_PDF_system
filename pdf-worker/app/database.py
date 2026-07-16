@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DISPLAY_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
 LEGACY_SCHEMA_SQL = """
@@ -326,7 +326,53 @@ CREATE INDEX IF NOT EXISTS idx_preview_jobs_status_created
     ON preview_jobs(status, created_at);
 """
 
-SCHEMA_SQL = LEGACY_SCHEMA_SQL + DECOUPLED_SCHEMA_SQL + PREVIEW_SCHEMA_SQL
+VIEWER_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS viewer_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_key_hash TEXT NOT NULL UNIQUE,
+    trace_code TEXT NOT NULL UNIQUE,
+    qr_alias_id INTEGER NOT NULL,
+    revision_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'expired', 'revoked', 'blocked')),
+    user_agent_hash TEXT,
+    network_fingerprint_hash TEXT,
+    page_requests INTEGER NOT NULL DEFAULT 0 CHECK (page_requests >= 0),
+    denied_requests INTEGER NOT NULL DEFAULT 0 CHECK (denied_requests >= 0),
+    last_page_number INTEGER,
+    FOREIGN KEY (qr_alias_id) REFERENCES qr_aliases(id) ON DELETE RESTRICT,
+    FOREIGN KEY (revision_id) REFERENCES answer_revisions(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_viewer_sessions_alias_created
+    ON viewer_sessions(qr_alias_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_viewer_sessions_status_expiry
+    ON viewer_sessions(status, expires_at);
+
+CREATE TABLE IF NOT EXISTS viewer_access_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    viewer_session_id INTEGER NOT NULL,
+    event_type TEXT NOT NULL CHECK (event_type IN (
+        'session_created', 'manifest_viewed', 'page_viewed', 'page_denied',
+        'rate_limited', 'session_expired', 'session_revoked'
+    )),
+    page_number INTEGER,
+    outcome TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    details TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY (viewer_session_id) REFERENCES viewer_sessions(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_viewer_access_events_session_created
+    ON viewer_access_events(viewer_session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_viewer_access_events_created
+    ON viewer_access_events(created_at);
+"""
+
+SCHEMA_SQL = LEGACY_SCHEMA_SQL + DECOUPLED_SCHEMA_SQL + PREVIEW_SCHEMA_SQL + VIEWER_SCHEMA_SQL
 
 
 def new_display_code() -> str:
@@ -603,6 +649,13 @@ class Database:
                 connection.execute(statement)
         connection.execute("PRAGMA user_version = 4")
 
+    @staticmethod
+    def _migrate_v4_to_v5(connection: sqlite3.Connection) -> None:
+        for statement in VIEWER_SCHEMA_SQL.split(";"):
+            if statement.strip():
+                connection.execute(statement)
+        connection.execute("PRAGMA user_version = 5")
+
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
@@ -654,6 +707,18 @@ class Database:
                     connection.rollback()
                     raise
             version = 4
+
+        if version == 4:
+            self._backup("stage05c", version)
+            with self.connect() as connection:
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._migrate_v4_to_v5(connection)
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
+            version = 5
 
         if version < SCHEMA_VERSION:
             raise RuntimeError(

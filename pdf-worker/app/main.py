@@ -30,6 +30,8 @@ from app.services.pdf_service import PdfService
 from app.services.preview_service import PreviewService
 from app.services.qr_service import QrService
 from app.services.external_url import ExternalUrlValidator
+from app.services.viewer_session import ViewerSessionService
+from app.services.watermark import WatermarkService
 from app.storage.local import LocalStorageBackend
 
 
@@ -65,6 +67,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             preview_service,
         )
         resolver_service = QrResolverService(database)
+        viewer_session_service = ViewerSessionService(configured_settings, database)
+        watermark_service = WatermarkService(configured_settings)
         binding_service = BindingService(
             configured_settings,
             database,
@@ -89,6 +93,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.preview_service = preview_service
         application.state.external_url_validator = external_url_validator
         application.state.resolver_service = resolver_service
+        application.state.viewer_session_service = viewer_session_service
+        application.state.watermark_service = watermark_service
         application.state.binding_service = binding_service
         application.state.pdf_service = pdf_service
         yield
@@ -147,6 +153,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers = student.student_headers(csp=True)
             if status == 503:
                 headers["Retry-After"] = "30"
+            if status == 429:
+                headers["Retry-After"] = "60"
             return application.state.templates.TemplateResponse(
                 request,
                 "student/error.html",
@@ -196,6 +204,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "PREVIEW_EXTERNAL_DISABLED": "该内容暂不支持受控在线预览。",
                 "PREVIEW_EXTERNAL_UNAVAILABLE": "该内容不属于受控在线预览。",
                 "ORIGINAL_ADMIN_ONLY": "原始文件仅允许管理员登录后访问。",
+                "VIEWER_SESSION_REQUIRED": "预览会话尚未建立，请刷新页面或重新扫码。",
+                "VIEWER_SESSION_INVALID": "预览会话无效，请刷新页面或重新扫码。",
+                "VIEWER_SESSION_ALIAS_MISMATCH": "该预览会话不属于这份资料，请重新扫码。",
+                "VIEWER_SESSION_INACTIVE": "本次预览已失效，请刷新页面或重新扫码。",
+                "VIEWER_SESSION_EXPIRED": "本次预览已过期，请刷新页面或重新扫码。",
+                "VIEWER_RATE_LIMITED": "请求过于频繁，请稍候再试。",
             }
             message = student_messages.get(exc.code, chinese_error(exc.code, exc.message))
             status_code = 503 if exc.code in {"ASSET_MISSING", "STORED_FILE_MISSING"} else exc.status_code

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}预览会话 - {{ site_name }}{% endblock %}
+{% block content %}
+<header class="page-heading">
+  <div><p class="eyebrow">访问审计</p><h1>匿名预览会话</h1></div>
+  <span class="status-tag {% if watermark_chinese %}success{% endif %}">
+    水印字体：{% if watermark_chinese %}中文可用{% else %}ASCII 回退{% endif %}
+  </span>
+</header>
+<form method="get" class="filter-bar">
+  <label>查询预览编号、资料编号或名称<input name="q" value="{{ q }}"></label>
+  <button type="submit">查询</button>
+</form>
+{% if sessions %}
+<div class="compact-list">
+  {% for item in sessions %}
+  <article class="panel">
+    <div class="section-heading">
+      <div><strong>{{ item.trace_code }}</strong><p>{{ item.material_name }} · {{ item.material_code }} · 第 {{ item.revision_number }} 版</p></div>
+      <span class="status-tag">{% if item.status == 'active' %}有效{% elif item.status == 'expired' %}已过期{% elif item.status == 'revoked' %}已撤销{% else %}已阻止{% endif %}</span>
+    </div>
+    <p>创建：{{ item.created_at }}　到期：{{ item.expires_at }}</p>
+    <p>页面请求 {{ item.page_requests }} 次，拒绝 {{ item.denied_requests }} 次{% if item.last_page_number %}，最后第 {{ item.last_page_number }} 页{% endif %}</p>
+    {% if item.status == 'active' %}
+    <form method="post" action="/admin/viewer-sessions/{{ item.id }}/revoke">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="danger-button" type="submit">撤销此会话</button>
+    </form>
+    {% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% else %}<p class="empty">没有找到预览会话。</p>{% endif %}
+{% endblock %}

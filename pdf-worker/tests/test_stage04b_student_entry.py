@@ -42,6 +42,7 @@ def test_dynamic_content_tracks_current_without_exposing_original(client):
     old = prepare_preview(client, token)
     old_key = old.revision["revision_key"]
 
+    client.get(f"/q/{token}")
     before = client.get(f"/q/{token}/manifest").json()
     assert before["page_count"] == 1
     assert client.get(f"/content/{old_key}").status_code == 403
@@ -55,6 +56,9 @@ def test_dynamic_content_tracks_current_without_exposing_original(client):
     )
     assert replaced.status_code == 200
     prepare_preview(client, token)
+    old_session = client.get(f"/q/{token}/manifest").json()
+    assert old_session["page_count"] == 1
+    client.get(f"/q/{token}")
     after = client.get(f"/q/{token}/manifest").json()
     assert after["page_count"] == 2
     assert client.get(f"/content/{old_key}").status_code == 403
@@ -95,9 +99,11 @@ def test_fixed_qr_uses_independent_pinned_preview(client):
         files={"file": ("new.pdf", updated, "application/pdf")},
     )
     prepare_preview(client, token)
+    client.get(f"/q/{pinned_token}")
     assert client.get(f"/q/{pinned_token}/manifest").json()["page_count"] == 1
-    assert client.get(f"/q/{token}/manifest").json()["page_count"] == 2
     assert client.get(f"/q/{pinned_token}/pages/1").content != original
+    client.get(f"/q/{token}")
+    assert client.get(f"/q/{token}/manifest").json()["page_count"] == 2
     with client.app.state.database.read() as connection:
         alias = connection.execute(
             "SELECT * FROM qr_aliases WHERE public_token = ?", (pinned_token,)

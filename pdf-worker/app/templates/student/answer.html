@@ -40,6 +40,7 @@
     <section class="viewer-summary" aria-label="预览说明">
       <strong>内容仅供在线预览</strong>
       <span>共 {{ answer.page_count }} 页，第一页已优先加载，后续页面将在接近屏幕时加载。</span>
+      <span class="viewer-trace">本次匿名预览编号：{{ answer.trace_code }}</span>
     </section>
     <p class="loading-status" data-loading-status aria-live="polite">正在加载第一页……</p>
     <section class="preview-pages" aria-label="解析内容">

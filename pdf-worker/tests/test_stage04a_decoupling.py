@@ -90,12 +90,18 @@ def test_stage04a_migration_preserves_identity_content_and_references(tmp_path):
     assert backup.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     assert backup.execute("PRAGMA user_version").fetchone()[0] == 2
     backup.close()
-    stage05_backup = sqlite3.connect(database.last_backup_path)
-    assert stage05_backup.execute("PRAGMA user_version").fetchone()[0] == 3
-    stage05_backup.close()
+    stage05a_path = next(
+        item for item in (path.parent / "backups").iterdir() if "stage05a-v3" in item.name
+    )
+    stage05a_backup = sqlite3.connect(stage05a_path)
+    assert stage05a_backup.execute("PRAGMA user_version").fetchone()[0] == 3
+    stage05a_backup.close()
+    stage05c_backup = sqlite3.connect(database.last_backup_path)
+    assert stage05c_backup.execute("PRAGMA user_version").fetchone()[0] == 4
+    stage05c_backup.close()
 
     with database.read() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
         resource = connection.execute("SELECT * FROM answer_resources").fetchone()
         revision = connection.execute("SELECT * FROM answer_revisions").fetchone()
         asset = connection.execute("SELECT * FROM assets").fetchone()

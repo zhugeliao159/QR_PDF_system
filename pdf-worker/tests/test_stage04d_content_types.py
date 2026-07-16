@@ -183,10 +183,14 @@ def test_fixed_image_alias_survives_new_pdf_publish(admin_client):
     publish_draft(admin_client, qr_id, pdf_key)
     prepare_preview(admin_client, qr_id)
 
-    assert admin_client.get(f"/q/{qr_id}/pages/1").headers["content-type"] == "image/webp"
-    assert admin_client.get(f"/q/{fixed_token}/pages/1").headers["content-type"] == "image/webp"
-    assert admin_client.get(f"/q/{qr_id}/pages/1").content != pdf
-    assert admin_client.get(f"/q/{fixed_token}/pages/1").content != image
+    admin_client.get(f"/q/{qr_id}")
+    latest = admin_client.get(f"/q/{qr_id}/pages/1")
+    assert latest.headers["content-type"] == "image/webp"
+    assert latest.content != pdf
+    admin_client.get(f"/q/{fixed_token}")
+    fixed = admin_client.get(f"/q/{fixed_token}/pages/1")
+    assert fixed.headers["content-type"] == "image/webp"
+    assert fixed.content != image
 
 
 @pytest.mark.parametrize(

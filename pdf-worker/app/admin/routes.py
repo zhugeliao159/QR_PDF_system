@@ -119,6 +119,28 @@ def dashboard(request: Request):
     return _render(request, "dashboard.html", materials=materials, total=total, jobs=jobs)
 
 
+@router.get("/viewer-sessions", response_class=HTMLResponse)
+def viewer_sessions(request: Request, q: str = ""):
+    sessions = request.app.state.viewer_session_service.list_sessions(q)
+    return _render(
+        request,
+        "viewer_sessions.html",
+        sessions=sessions,
+        q=q,
+        watermark_chinese=request.app.state.watermark_service.chinese_watermark_available,
+    )
+
+
+@router.post("/viewer-sessions/{session_id}/revoke")
+def revoke_viewer_session(
+    request: Request, session_id: int, csrf_token: str = Form(...)
+):
+    _csrf(request, csrf_token)
+    if not request.app.state.viewer_session_service.revoke(session_id):
+        raise AppError(404, "VIEWER_SESSION_NOT_FOUND", "viewer session does not exist")
+    return RedirectResponse("/admin/viewer-sessions?revoked=1", status_code=303)
+
+
 @router.get("/materials", response_class=HTMLResponse)
 def material_list(
     request: Request,

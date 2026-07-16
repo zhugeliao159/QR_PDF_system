@@ -84,7 +84,9 @@ def test_dynamic_fixed_and_legacy_routes_preserve_revision_semantics(client):
     )
     prepare_preview(client, token)
 
+    client.get(f"/q/{token}")
     assert client.get(f"/q/{token}/manifest").json()["page_count"] == 2
+    client.get(f"/q/{fixed_token}")
     assert client.get(f"/q/{fixed_token}/manifest").json()["page_count"] == 1
     legacy = client.get(f"/r/{token}", follow_redirects=False)
     assert legacy.status_code == 307 and legacy.headers["location"] == f"/q/{token}"
@@ -92,6 +94,7 @@ def test_dynamic_fixed_and_legacy_routes_preserve_revision_semantics(client):
         f"/r/{token}/versions/{first.revision['id']}", follow_redirects=False
     )
     assert legacy_fixed.status_code == 307
+    client.get(legacy_fixed.headers["location"])
     assert client.get(f"{legacy_fixed.headers['location']}/manifest").json()["page_count"] == 1
 
 
@@ -120,6 +123,7 @@ def test_preview_not_ready_failed_and_page_range_errors_are_chinese(client):
     retry = client.app.state.preview_service.request_preview(resolved.revision["id"])
     assert retry.status == "pending"
     client.app.state.preview_service.process_until_idle("stage05b-test-worker")
+    client.get(f"/q/{token}")
     outside = client.get(f"/q/{token}/pages/99")
     assert outside.status_code == 404
     assert "没有找到这一页" in outside.text

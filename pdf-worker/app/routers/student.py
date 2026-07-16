@@ -3,7 +3,7 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from app.errors import AppError
 from app.responses import download_response
@@ -31,7 +31,9 @@ def student_headers(*, csp: bool = False) -> dict[str, str]:
     return headers
 
 
-def _student_view(resolved, public_token: str, bundle: dict | None = None) -> dict:
+def _student_view(
+    resolved, public_token: str, bundle: dict | None = None, trace_code: str = ""
+) -> dict:
     resource = resolved.resource
     revision = resolved.revision
     view = {
@@ -46,6 +48,7 @@ def _student_view(resolved, public_token: str, bundle: dict | None = None) -> di
         "content_type": revision["content_kind"],
         "page_count": 0,
         "pages": [],
+        "trace_code": trace_code,
     }
     if bundle is not None:
         view["page_count"] = bundle["preview"]["page_count"]
@@ -62,8 +65,12 @@ def _student_view(resolved, public_token: str, bundle: dict | None = None) -> di
     return view
 
 
-def _resolved_preview(request: Request, public_token: str):
-    resolved = request.app.state.resolver_service.resolve_latest(public_token)
+def _session_preview(request: Request, public_token: str):
+    raw_token = request.cookies.get(request.app.state.settings.viewer_cookie_name)
+    session = request.app.state.viewer_session_service.validate(public_token, raw_token)
+    resolved = request.app.state.resolver_service.resolve_revision(
+        public_token, session["revision_id"]
+    )
     if resolved.revision["target_type"] != "file" or resolved.asset is None:
         raise AppError(
             403,
@@ -75,7 +82,7 @@ def _resolved_preview(request: Request, public_token: str):
         resolved.asset["id"],
         resolved.asset["sha256"],
     )
-    return resolved, bundle
+    return session, resolved, bundle
 
 
 @router.get("/q/{public_token}", response_class=HTMLResponse)
@@ -91,23 +98,38 @@ def answer_page(request: Request, public_token: str):
             resolved.asset["id"],
             resolved.asset["sha256"],
         )
+    raw_session, viewer = request.app.state.viewer_session_service.create(
+        resolved,
+        request.headers.get("user-agent"),
+        request.client.host if request.client else None,
+    )
     response = request.app.state.templates.TemplateResponse(
         request,
         "student/answer.html",
         {
             "request": request,
             "site_name": request.app.state.settings.site_name,
-            "answer": _student_view(resolved, public_token, bundle),
+            "answer": _student_view(resolved, public_token, bundle, viewer["trace_code"]),
             "external_policy": external_policy,
         },
     )
     response.headers.update(student_headers(csp=True))
+    response.set_cookie(
+        key=request.app.state.settings.viewer_cookie_name,
+        value=raw_session,
+        max_age=request.app.state.settings.viewer_session_ttl_minutes * 60,
+        httponly=True,
+        secure=request.app.state.settings.viewer_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
     return response
 
 
 @router.get("/q/{public_token}/manifest")
 def answer_manifest(request: Request, public_token: str) -> JSONResponse:
-    resolved, bundle = _resolved_preview(request, public_token)
+    session, resolved, bundle = _session_preview(request, public_token)
+    request.app.state.viewer_session_service.manifest_access(session)
     return JSONResponse(
         {
             "page_count": bundle["preview"]["page_count"],
@@ -124,8 +146,8 @@ def answer_preview_page(
     request: Request,
     public_token: str,
     page_number: int,
-) -> FileResponse:
-    resolved = request.app.state.resolver_service.resolve_latest(public_token)
+) -> Response:
+    session, resolved, _ = _session_preview(request, public_token)
     if resolved.revision["target_type"] != "file" or resolved.asset is None:
         raise AppError(404, "PREVIEW_PAGE_NOT_FOUND", "preview page does not exist")
     path, _ = request.app.state.preview_service.student_page(
@@ -134,13 +156,14 @@ def answer_preview_page(
         resolved.asset["sha256"],
         page_number,
     )
-    return FileResponse(
-        path,
+    with request.app.state.viewer_session_service.page_access(session, page_number):
+        content = request.app.state.watermark_service.render(
+            path, resolved.resource["display_code"], session["trace_code"]
+        )
+    return Response(
+        content=content,
         media_type="image/webp",
-        headers={
-            **student_headers(),
-            "Content-Disposition": "inline",
-        },
+        headers={**student_headers(), "Content-Disposition": "inline"},
     )
 
 

@@ -92,6 +92,27 @@ class Settings:
     preview_worker_poll_seconds: float = 2.0
     require_preview_before_publish: bool = False
     protected_preview_external_url_policy: str = "disable"
+    viewer_session_ttl_minutes: int = 30
+    viewer_session_idle_minutes: int = 10
+    viewer_cookie_secure: bool = False
+    viewer_cookie_name: str = "viewer_session"
+    viewer_session_secret: str = "test-viewer-session-secret-at-least-32-bytes"
+    viewer_session_max_page_requests: int = 1000
+    viewer_store_network_fingerprint: bool = False
+    viewer_store_user_agent_hash: bool = True
+    viewer_access_event_retention_days: int = 30
+    viewer_log_page_events: bool = True
+    viewer_page_rate_limit_per_minute: int = 120
+    viewer_manifest_rate_limit_per_minute: int = 30
+    viewer_max_concurrent_page_requests: int = 6
+    viewer_rate_limit_enabled: bool = True
+    watermark_font_path: str = ""
+    watermark_text_template: str = "在线预览 | {material_code} | {trace_code} | {timestamp}"
+    watermark_opacity: int = 45
+    watermark_rotation_degrees: int = -25
+    watermark_font_size: int = 28
+    watermark_spacing_x: int = 420
+    watermark_spacing_y: int = 280
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -157,11 +178,41 @@ class Settings:
                 "disable",
                 {"disable", "warn", "allow"},
             ),
+            viewer_session_ttl_minutes=_env_int("VIEWER_SESSION_TTL_MINUTES", 30),
+            viewer_session_idle_minutes=_env_int("VIEWER_SESSION_IDLE_MINUTES", 10),
+            viewer_cookie_secure=_env_bool("VIEWER_COOKIE_SECURE", False),
+            viewer_cookie_name=os.getenv("VIEWER_COOKIE_NAME", "viewer_session").strip() or "viewer_session",
+            viewer_session_secret=os.getenv("VIEWER_SESSION_SECRET", "").strip(),
+            viewer_session_max_page_requests=_env_int("VIEWER_SESSION_MAX_PAGE_REQUESTS", 1000),
+            viewer_store_network_fingerprint=_env_bool("VIEWER_STORE_NETWORK_FINGERPRINT", False),
+            viewer_store_user_agent_hash=_env_bool("VIEWER_STORE_USER_AGENT_HASH", True),
+            viewer_access_event_retention_days=_env_int("VIEWER_ACCESS_EVENT_RETENTION_DAYS", 30),
+            viewer_log_page_events=_env_bool("VIEWER_LOG_PAGE_EVENTS", True),
+            viewer_page_rate_limit_per_minute=_env_int("VIEWER_PAGE_RATE_LIMIT_PER_MINUTE", 120),
+            viewer_manifest_rate_limit_per_minute=_env_int("VIEWER_MANIFEST_RATE_LIMIT_PER_MINUTE", 30),
+            viewer_max_concurrent_page_requests=_env_int("VIEWER_MAX_CONCURRENT_PAGE_REQUESTS", 6),
+            viewer_rate_limit_enabled=_env_bool("VIEWER_RATE_LIMIT_ENABLED", True),
+            watermark_font_path=os.getenv("WATERMARK_FONT_PATH", "").strip(),
+            watermark_text_template=os.getenv(
+                "WATERMARK_TEXT_TEMPLATE",
+                "在线预览 | {material_code} | {trace_code} | {timestamp}",
+            ).strip() or "在线预览 | {material_code} | {trace_code} | {timestamp}",
+            watermark_opacity=_env_int("WATERMARK_OPACITY", 45, 1),
+            watermark_rotation_degrees=int(os.getenv("WATERMARK_ROTATION_DEGREES", "-25")),
+            watermark_font_size=_env_int("WATERMARK_FONT_SIZE", 28),
+            watermark_spacing_x=_env_int("WATERMARK_SPACING_X", 420),
+            watermark_spacing_y=_env_int("WATERMARK_SPACING_Y", 280),
         )
         if not settings.admin_password_hash:
             raise ValueError("ADMIN_PASSWORD_HASH must be configured")
         if len(settings.session_secret) < 32:
             raise ValueError("SESSION_SECRET must contain at least 32 characters")
+        if len(settings.viewer_session_secret.encode("utf-8")) < 32:
+            raise ValueError("VIEWER_SESSION_SECRET must contain at least 32 bytes")
+        if settings.viewer_session_idle_minutes > settings.viewer_session_ttl_minutes:
+            raise ValueError("VIEWER_SESSION_IDLE_MINUTES cannot exceed VIEWER_SESSION_TTL_MINUTES")
+        if not 1 <= settings.watermark_opacity <= 255:
+            raise ValueError("WATERMARK_OPACITY must be between 1 and 255")
         return settings
 
     @property

@@ -108,6 +108,15 @@ docker compose down
 | `PREVIEW_JOB_STALE_SECONDS` | `900` | processing 任务超时恢复时间 |
 | `REQUIRE_PREVIEW_BEFORE_PUBLISH` | `true` | 发布文件版本前强制完整预览校验 |
 | `PROTECTED_PREVIEW_EXTERNAL_URL_POLICY` | `disable` | 学生端外部网址策略：disable、warn 或 allow |
+| `VIEWER_SESSION_SECRET` | 空模板 | 预览 Cookie 的 HMAC 密钥，必须至少 32 字节且不得提交真实值 |
+| `VIEWER_SESSION_TTL_MINUTES` | `30` | 匿名预览绝对有效期 |
+| `VIEWER_SESSION_IDLE_MINUTES` | `10` | 匿名预览空闲有效期 |
+| `VIEWER_SESSION_MAX_PAGE_REQUESTS` | `1000` | 单会话页面请求上限 |
+| `VIEWER_PAGE_RATE_LIMIT_PER_MINUTE` | `120` | 单会话页面分钟限速 |
+| `VIEWER_MANIFEST_RATE_LIMIT_PER_MINUTE` | `30` | 单会话清单分钟限速 |
+| `VIEWER_MAX_CONCURRENT_PAGE_REQUESTS` | `6` | 全进程同时生成水印页面上限 |
+| `WATERMARK_FONT_PATH` | 空 | 可选中文字体路径；不可用时自动使用 ASCII 水印 |
+| `WATERMARK_OPACITY` | `45` | 服务端像素水印透明度（1–255） |
 
 初次部署可在构建好的容器中运行安全初始化脚本。脚本会拒绝覆盖已有配置，并把一次性初始密码写入明确指定、权限为 0600 的临时文件：
 
