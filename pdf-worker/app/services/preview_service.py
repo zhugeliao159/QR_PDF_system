@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from PIL import Image, UnidentifiedImageError
+
 from app.config import Settings
 from app.database import Database, new_public_key
 from app.errors import AppError
@@ -239,6 +241,122 @@ class PreviewService:
                 (revision_id,),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def completed_preview(
+        self,
+        revision_id: int,
+        source_asset_id: int,
+        source_sha256: str,
+        *,
+        verify_files: bool = False,
+    ) -> dict[str, Any]:
+        """Return one complete preview while keeping every storage identifier private."""
+        with self.database.read() as connection:
+            preview = connection.execute(
+                """
+                SELECT id, status, page_count, total_size_bytes, completed_at,
+                       renderer_version, source_asset_id, source_sha256
+                FROM preview_sets
+                WHERE revision_id = ? AND source_asset_id = ? AND source_sha256 = ?
+                  AND status = 'completed'
+                ORDER BY completed_at DESC, id DESC LIMIT 1
+                """,
+                (revision_id, source_asset_id, source_sha256),
+            ).fetchone()
+            if preview is None:
+                latest = connection.execute(
+                    """
+                    SELECT status FROM preview_sets
+                    WHERE revision_id = ?
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (revision_id,),
+                ).fetchone()
+                if latest is not None and latest["status"] == "failed":
+                    raise AppError(
+                        503,
+                        "PREVIEW_FAILED",
+                        "preview generation failed",
+                    )
+                raise AppError(
+                    503,
+                    "PREVIEW_NOT_READY",
+                    "preview content is not ready",
+                )
+            pages = connection.execute(
+                """
+                SELECT page_number, storage_backend, storage_key, mime_type,
+                       width, height, size_bytes, sha256
+                FROM preview_pages
+                WHERE preview_set_id = ?
+                ORDER BY page_number
+                """,
+                (preview["id"],),
+            ).fetchall()
+
+        page_rows = [dict(page) for page in pages]
+        expected = list(range(1, int(preview["page_count"]) + 1))
+        if not expected or [page["page_number"] for page in page_rows] != expected:
+            raise AppError(
+                503,
+                "PREVIEW_INCOMPLETE",
+                "preview page records are incomplete",
+            )
+        for page in page_rows:
+            path = self.storage.resolve(page["storage_key"])
+            if not path.is_file() or path.stat().st_size != page["size_bytes"]:
+                raise AppError(
+                    503,
+                    "PREVIEW_PAGE_MISSING",
+                    "preview page file is missing",
+                )
+            if verify_files:
+                self._verify_page_file(path, page)
+        return {"preview": dict(preview), "pages": page_rows}
+
+    def _verify_page_file(self, path: Path, page: dict[str, Any]) -> None:
+        try:
+            with Image.open(path) as image:
+                image.load()
+                if image.format != "WEBP" or image.size != (page["width"], page["height"]):
+                    raise AppError(
+                        503,
+                        "PREVIEW_PAGE_INVALID",
+                        "preview page file is invalid",
+                    )
+        except AppError:
+            raise
+        except (OSError, UnidentifiedImageError) as exc:
+            raise AppError(
+                503,
+                "PREVIEW_PAGE_INVALID",
+                "preview page file cannot be opened",
+            ) from exc
+        if self._sha256(path) != page["sha256"]:
+            raise AppError(
+                503,
+                "PREVIEW_PAGE_HASH_MISMATCH",
+                "preview page checksum does not match",
+            )
+
+    def student_page(
+        self,
+        revision_id: int,
+        source_asset_id: int,
+        source_sha256: str,
+        page_number: int,
+    ) -> tuple[Path, dict[str, Any]]:
+        bundle = self.completed_preview(
+            revision_id,
+            source_asset_id,
+            source_sha256,
+        )
+        if page_number < 1 or page_number > len(bundle["pages"]):
+            raise AppError(404, "PREVIEW_PAGE_NOT_FOUND", "preview page does not exist")
+        page = bundle["pages"][page_number - 1]
+        path = self.storage.resolve(page["storage_key"])
+        self._verify_page_file(path, page)
+        return path, page
 
     def page_path(self, revision_id: int, page_number: int) -> tuple[Path, dict[str, Any]]:
         with self.database.read() as connection:

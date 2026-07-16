@@ -2,7 +2,12 @@ from io import BytesIO
 
 from PIL import Image
 
-from conftest import create_binding, png_bytes
+from conftest import create_binding, png_bytes, prepare_preview
+
+
+def current_bytes(client, token):
+    resolved = client.app.state.resolver_service.resolve_latest(token)
+    return client.app.state.asset_service.path(resolved.asset).read_bytes()
 
 
 def test_create_qr_and_permanent_file(client):
@@ -20,10 +25,12 @@ def test_create_qr_and_permanent_file(client):
         assert qr_image.format == "PNG"
         assert qr_image.width == qr_image.height
 
-    file_response = client.get(f"/r/{binding['qr_id']}")
-    assert file_response.status_code == 200
-    assert file_response.content == png_bytes()
-    assert file_response.headers["cache-control"].startswith("no-cache")
+    prepare_preview(client, binding["qr_id"])
+    file_response = client.get(f"/r/{binding['qr_id']}", follow_redirects=False)
+    assert file_response.status_code == 307
+    preview = client.get(file_response.headers["location"])
+    assert preview.status_code == 200
+    assert "内容仅供在线预览" in preview.text
 
 
 def test_replace_keeps_qr_id_and_failed_replace_keeps_current(client):
@@ -35,7 +42,7 @@ def test_replace_keeps_qr_id_and_failed_replace_keeps_current(client):
     )
     assert replaced.status_code == 200
     assert replaced.json()["qr_id"] == qr_id
-    assert client.get(f"/r/{qr_id}").content == b"second"
+    assert current_bytes(client, qr_id) == b"second"
 
     rejected = client.put(
         f"/bindings/{qr_id}/file",
@@ -43,7 +50,7 @@ def test_replace_keeps_qr_id_and_failed_replace_keeps_current(client):
     )
     assert rejected.status_code == 415
     assert rejected.json()["error"]["code"] == "INVALID_IMAGE_FILE"
-    assert client.get(f"/r/{qr_id}").content == b"second"
+    assert current_bytes(client, qr_id) == b"second"
     assert len(client.get(f"/bindings/{qr_id}/versions").json()) == 2
 
 

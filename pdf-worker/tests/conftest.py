@@ -108,6 +108,14 @@ def create_binding(client, content=b"answer-v1", filename="answer.txt"):
     return response.json()
 
 
+def prepare_preview(client, public_token: str):
+    resolved = client.app.state.resolver_service.resolve_latest(public_token)
+    assert resolved.revision["target_type"] == "file"
+    client.app.state.preview_service.request_preview(resolved.revision["id"])
+    assert client.app.state.preview_service.process_until_idle("test-preview-worker") >= 1
+    return resolved
+
+
 def create_pdf_job(client, qr_id, content=None, **fields):
     data = {
         "qr_id": qr_id,

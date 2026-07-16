@@ -12,7 +12,14 @@ from PIL import Image
 from app.errors import AppError
 from app.main import create_app
 from app.services.external_url import ExternalUrlValidator
-from conftest import create_binding, csrf_from, login_admin, pdf_bytes, png_bytes
+from conftest import (
+    create_binding,
+    csrf_from,
+    login_admin,
+    pdf_bytes,
+    png_bytes,
+    prepare_preview,
+)
 
 
 PUBLIC_IP = "93.184.216.34"
@@ -75,6 +82,7 @@ def configured_external_settings(admin_settings, **values):
         "allow_external_urls": True,
         "external_url_allowed_hosts": ("allowed.example", "second.example"),
         "external_url_require_https": True,
+        "protected_preview_external_url_policy": "warn",
     }
     defaults.update(values)
     return replace(admin_settings, **defaults)
@@ -117,7 +125,9 @@ def test_png_jpeg_webp_create_private_drafts(
     assert "<img" in preview.text
     assert filename in preview.text
     assert admin_client.get(f"/content/{key}").status_code == 404
-    assert admin_client.get(f"/q/{qr_id}/content", follow_redirects=True).content == b"old-answer"
+    assert admin_client.app.state.asset_service.path(
+        admin_client.app.state.resolver_service.resolve_latest(qr_id).asset
+    ).read_bytes() == b"old-answer"
     with admin_client.app.state.database.read() as connection:
         row = connection.execute(
             """SELECT v.status, a.mime_type FROM answer_revisions v
@@ -127,7 +137,7 @@ def test_png_jpeg_webp_create_private_drafts(
         assert dict(row) == {"status": "draft", "mime_type": expected_mime}
 
 
-def test_published_image_loads_immediately_with_immutable_cache(admin_client):
+def test_published_image_loads_as_private_webp_preview(admin_client):
     binding = create_binding(admin_client, b"old-answer")
     qr_id = binding["qr_id"]
     content = png_bytes("green")
@@ -135,23 +145,16 @@ def test_published_image_loads_immediately_with_immutable_cache(admin_client):
         admin_client, qr_id, content, "中文答案.png", "image/png", "image"
     )
     publish_draft(admin_client, qr_id, key)
+    prepare_preview(admin_client, qr_id)
 
     page = admin_client.get(f"/q/{qr_id}")
     assert page.status_code == 200
-    assert "data-student-image" in page.text
-    assert "答案图片" in page.text
-    redirect = admin_client.get(f"/q/{qr_id}/content", follow_redirects=False)
-    assert redirect.status_code == 307
-    image = admin_client.get(redirect.headers["location"])
-    assert image.content == content
-    assert image.headers["content-type"] == "image/png"
-    assert image.headers["cache-control"] == "public, max-age=31536000, immutable"
-    assert image.headers["etag"].strip('"') == binding_hash(content)
-    assert "filename*=UTF-8''" in image.headers["content-disposition"]
-    conditional = admin_client.get(
-        redirect.headers["location"], headers={"If-None-Match": image.headers["etag"]}
-    )
-    assert conditional.status_code == 304
+    assert "preview-image" in page.text
+    image = admin_client.get(f"/q/{qr_id}/pages/1")
+    assert image.content != content
+    assert image.headers["content-type"] == "image/webp"
+    assert image.headers["cache-control"] == "private, no-store, max-age=0"
+    assert image.headers["content-disposition"] == "inline"
 
 
 def binding_hash(content: bytes) -> str:
@@ -168,6 +171,7 @@ def test_fixed_image_alias_survives_new_pdf_publish(admin_client):
         admin_client, qr_id, image, "答案.png", "image/png", "image"
     )
     publish_draft(admin_client, qr_id, image_key)
+    prepare_preview(admin_client, qr_id)
     image_revision = admin_client.app.state.resolver_service.resolve_latest(qr_id).revision
     fixed_token = admin_client.app.state.binding_service.fixed_alias_token(
         qr_id, image_revision["id"]
@@ -177,9 +181,12 @@ def test_fixed_image_alias_survives_new_pdf_publish(admin_client):
         admin_client, qr_id, pdf, "新版.pdf", "application/pdf", "pdf"
     )
     publish_draft(admin_client, qr_id, pdf_key)
+    prepare_preview(admin_client, qr_id)
 
-    assert admin_client.get(f"/q/{qr_id}/content", follow_redirects=True).content == pdf
-    assert admin_client.get(f"/q/{fixed_token}/content", follow_redirects=True).content == image
+    assert admin_client.get(f"/q/{qr_id}/pages/1").headers["content-type"] == "image/webp"
+    assert admin_client.get(f"/q/{fixed_token}/pages/1").headers["content-type"] == "image/webp"
+    assert admin_client.get(f"/q/{qr_id}/pages/1").content != pdf
+    assert admin_client.get(f"/q/{fixed_token}/pages/1").content != image
 
 
 @pytest.mark.parametrize(
@@ -203,9 +210,9 @@ def test_invalid_and_unsupported_images_are_rejected(
     )
     assert response.status_code == 415
     assert error_text in response.text
-    assert admin_client.get(
-        f"/q/{binding['qr_id']}/content", follow_redirects=True
-    ).content == b"old"
+    assert admin_client.app.state.asset_service.path(
+        admin_client.app.state.resolver_service.resolve_latest(binding["qr_id"]).asset
+    ).read_bytes() == b"old"
 
 
 def test_image_size_pixel_limit_and_path_filename(admin_settings):
@@ -368,7 +375,9 @@ def test_external_draft_publish_click_redirect_fixed_alias_and_audit(admin_setti
         assert "此版本将打开外部网页" in preview.text
         assert "allowed.example" in preview.text
         assert "<iframe" not in preview.text
-        assert client.get(f"/q/{qr_id}/content", follow_redirects=True).content == b"old-answer"
+        assert client.app.state.asset_service.path(
+            client.app.state.resolver_service.resolve_latest(qr_id).asset
+        ).read_bytes() == b"old-answer"
 
         unconfirmed = client.post(
             f"/admin/materials/{qr_id}/drafts/{first_key}/publish",
@@ -380,8 +389,8 @@ def test_external_draft_publish_click_redirect_fixed_alias_and_audit(admin_setti
 
         student = client.get(f"/q/{qr_id}")
         assert student.status_code == 200
-        assert "此解析内容由外部网站提供" in student.text
-        assert "打开外部解析" in student.text
+        assert "外部网站内容" in student.text
+        assert "确认并打开外部网站" in student.text
         assert first_url not in student.text
         assert "<iframe" not in student.text
         clicked = client.get(f"/q/{qr_id}/content", follow_redirects=False)

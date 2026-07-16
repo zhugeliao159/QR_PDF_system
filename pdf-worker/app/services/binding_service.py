@@ -83,6 +83,23 @@ class BindingService:
             "preview": status or {"status": "not_generated"},
         }
 
+    def _prepare_preview_for_publish(self, revision_id: int) -> None:
+        if self.preview_service is None:
+            raise AppError(
+                503,
+                "PREVIEW_SERVICE_UNAVAILABLE",
+                "preview service is unavailable",
+            )
+        self.preview_service.request_preview(revision_id)
+        self.preview_service.process_until_idle("inline-publish", max_jobs=1)
+        status = self.preview_service.status_for_revision(revision_id)
+        if status is None or status["status"] != "completed":
+            raise AppError(
+                409,
+                "PREVIEW_REQUIRED",
+                "学生预览尚未生成完成，暂时不能发布。",
+            )
+
     def _validate_binding_file(self, stored: StoredObject) -> StoredObject:
         path = self.storage.resolve(stored.relative_path)
         suffix = Path(stored.original_filename).suffix.lower()
@@ -323,6 +340,7 @@ class BindingService:
         stored = await self.storage.save_binding_upload(
             upload, qr_id, self.settings.max_upload_size_bytes
         )
+        committed_draft = False
         try:
             stored = self._validate_binding_file(stored)
             metadata = self._clean_metadata(
@@ -377,7 +395,12 @@ class BindingService:
                     """,
                     (
                         resource_id, draft["id"], int(alias_cursor.lastrowid), actor,
-                        "通过兼容流程创建资料并立即发布首个版本", now,
+                        (
+                            "创建资料并等待预览后发布首个版本"
+                            if self.revision_service.require_preview_before_publish
+                            else "通过兼容流程创建资料并立即发布首个版本"
+                        ),
+                        now,
                     ),
                 )
                 connection.execute(
@@ -396,16 +419,30 @@ class BindingService:
                         now,
                     ),
                 )
-                self.revision_service.publish_in_connection(
-                    connection,
-                    resource_id,
-                    draft["id"],
-                    1,
-                    actor,
-                    "legacy_immediate_publish",
-                )
+                if not self.revision_service.require_preview_before_publish:
+                    self.revision_service.publish_in_connection(
+                        connection,
+                        resource_id,
+                        draft["id"],
+                        1,
+                        actor,
+                        "legacy_immediate_publish",
+                    )
+            committed_draft = self.revision_service.require_preview_before_publish
+            if committed_draft:
+                self._prepare_preview_for_publish(draft["id"])
+                with self.database.transaction() as connection:
+                    self.revision_service.publish_in_connection(
+                        connection,
+                        resource_id,
+                        draft["id"],
+                        1,
+                        actor,
+                        "legacy_immediate_publish",
+                    )
         except Exception:
-            self.storage.delete(stored.relative_path)
+            if not committed_draft:
+                self.storage.delete(stored.relative_path)
             raise
 
         logger.info("answer resource created public_token=%s version=1", qr_id)
@@ -422,6 +459,7 @@ class BindingService:
         stored = await self.storage.save_binding_upload(
             upload, qr_id, self.settings.max_upload_size_bytes
         )
+        committed_draft = False
         try:
             stored = self._validate_binding_file(stored)
             now = utc_now_iso()
@@ -429,17 +467,31 @@ class BindingService:
                 draft = self.revision_service.create_draft(
                     connection, binding["id"], stored, note, now, actor
                 )
-                self.revision_service.publish_in_connection(
-                    connection,
-                    binding["id"],
-                    draft["id"],
-                    binding["row_version"],
-                    actor,
-                    "legacy_immediate_publish",
-                )
+                if not self.revision_service.require_preview_before_publish:
+                    self.revision_service.publish_in_connection(
+                        connection,
+                        binding["id"],
+                        draft["id"],
+                        binding["row_version"],
+                        actor,
+                        "legacy_immediate_publish",
+                    )
                 version_number = draft["revision_number"]
+            committed_draft = self.revision_service.require_preview_before_publish
+            if committed_draft:
+                self._prepare_preview_for_publish(draft["id"])
+                with self.database.transaction() as connection:
+                    self.revision_service.publish_in_connection(
+                        connection,
+                        binding["id"],
+                        draft["id"],
+                        binding["row_version"],
+                        actor,
+                        "legacy_immediate_publish",
+                    )
         except Exception:
-            self.storage.delete(stored.relative_path)
+            if not committed_draft:
+                self.storage.delete(stored.relative_path)
             raise
 
         self._cleanup_old_versions(binding["id"])

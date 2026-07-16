@@ -1,6 +1,6 @@
 # 练习册二维码管理系统
 
-这是一个面向机构管理员的内部原型：上传答案或讲解资料，生成动态或固定版本二维码，并把二维码添加到练习册 PDF。Stage 4A 至 4D 已完成后端解耦、统一中文学生页、草稿发布、图片答案和受控外部网页能力；Stage 5A 已完成私有原件的 WebP 预览衍生基础设施。
+这是一个面向机构管理员的内部原型：上传答案或讲解资料，生成动态或固定版本二维码，并把二维码添加到练习册 PDF。Stage 5B 已将学生端切换为私有原件派生的逐页 WebP 在线预览。
 
 ## 当前状态
 
@@ -9,7 +9,7 @@
 - QuickDrop：<http://127.0.0.1:18080>
 - 当前分支：`main`
 - 数据库 schema：`4`
-- 自动化测试：`124 passed, 0 failed, 0 skipped`
+- 自动化测试：`130 passed, 0 failed, 0 skipped`
 
 仓库默认配置只监听服务器 `127.0.0.1`。经用户确认，当前部署已临时切换为 `192.168.100.20:18081` 局域网测试模式；同一机构 Wi-Fi 内的手机可以扫码测试，但地址依赖当前网络，不得用于正式印刷。
 
@@ -33,9 +33,9 @@ ssh -L 18080:127.0.0.1:18080 tx
 
 动态二维码只跟随“当前已发布答案”；保存草稿不会影响学生。固定二维码永久指向选定版本。详细步骤见 [管理员操作指南](docs/stage_03_admin_guide.md)。
 
-PDF 和图片在学生页中立即尝试显示。外部网页功能默认关闭；开启后，学生先看到中文来源和风险提示，明确点击后才使用临时跳转。服务端不会抓取或嵌入外部网页。
+PDF 和图片在学生页中以逐页 WebP 显示：第一页立即加载，后续页面按需加载。学生端不提供原始文件或下载按钮。外部网页默认不向学生开放，且不能宣称受到同等预览保护。
 
-新生成的二维码使用 `/q/{token}`：扫码后直接进入中文答案页。Stage 5A 已生成私有分页 WebP 预览，但学生端尚未切换，仍保留 Stage 4 的内容交付方式；切换到受控预览将在 Stage 5B 单独验收。旧 `/r` 二维码仍然有效。
+新生成的二维码使用 `/q/{token}`：扫码后直接进入中文分页预览。动态二维码跟随当前发布版本，固定二维码保持指定版本，旧 `/r` 二维码通过 307 临时跳转继续有效。
 
 ## 启动和更新
 
@@ -106,7 +106,8 @@ docker compose down
 | `PREVIEW_RENDER_VERSION` | `v1` | 预览算法版本 |
 | `PREVIEW_JOB_MAX_ATTEMPTS` | `2` | 预览任务最大尝试次数 |
 | `PREVIEW_JOB_STALE_SECONDS` | `900` | processing 任务超时恢复时间 |
-| `REQUIRE_PREVIEW_BEFORE_PUBLISH` | `false` | 为 Stage 5B 预留的发布门禁 |
+| `REQUIRE_PREVIEW_BEFORE_PUBLISH` | `true` | 发布文件版本前强制完整预览校验 |
+| `PROTECTED_PREVIEW_EXTERNAL_URL_POLICY` | `disable` | 学生端外部网址策略：disable、warn 或 allow |
 
 初次部署可在构建好的容器中运行安全初始化脚本。脚本会拒绝覆盖已有配置，并把一次性初始密码写入明确指定、权限为 0600 的临时文件：
 
@@ -163,7 +164,7 @@ docker compose --profile test build pdf-worker-tests
 docker compose --profile test run --rm pdf-worker-tests
 ```
 
-Stage 5A 最终结果为 `124 passed, 0 failed, 0 skipped`。
+Stage 5B 最终结果为 `130 passed, 0 failed, 0 skipped`。
 
 ## 安全边界
 
@@ -173,6 +174,7 @@ Stage 5A 最终结果为 `124 passed, 0 failed, 0 skipped`。
 - Swagger/OpenAPI 默认关闭。
 - PDF Worker 以非 root 用户运行，丢弃全部 Linux capabilities，启用 `no-new-privileges`，限制为 1 CPU、512 MiB 和 128 PIDs，并启用日志轮转。
 - Preview Worker 不开放端口，同样以非 root 运行，限制为 1 CPU、768 MiB 和 64 PIDs。它把支持的私有 PDF/图片重新编码为内部 WebP 页面；本阶段不承诺阻止截图、录屏或保存已收到的预览图片。
+- 匿名 `/q`、`/r` 与 `/content` 不返回原始 PDF/图片；管理员原件接口要求登录并记录审计。
 - QuickDrop 独立运行，PDF Worker 不读取或修改其数据库。
 
 ## 文档
@@ -203,6 +205,12 @@ Stage 5A 最终结果为 `124 passed, 0 failed, 0 skipped`。
 - [Stage 5A 回填指南](docs/stage_05a_backfill_guide.md)
 - [Stage 5A 报告](docs/stage_05a_report.md)
 - [Stage 5A 交接](docs/handoff_stage_05a.md)
+- [Stage 5B 学生预览规范](docs/stage_05b_student_viewer_spec.md)
+- [Stage 5B 原件访问策略](docs/stage_05b_original_access_policy.md)
+- [Stage 5B 切换库存](docs/stage_05b_cutover_inventory.md)
+- [Stage 5B 切换报告](docs/stage_05b_cutover_report.md)
+- [Stage 5B 报告](docs/stage_05b_report.md)
+- [Stage 5B 交接](docs/handoff_stage_05b.md)
 - [第二阶段 API 说明](docs/stage_02_api.md)
 
 ## 当前未实现

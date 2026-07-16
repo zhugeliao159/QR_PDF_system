@@ -54,14 +54,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         asset_service = AssetService(database, storage)
         resource_service = AnswerResourceService(database)
         external_url_validator = ExternalUrlValidator(configured_settings)
+        preview_service = PreviewService(
+            configured_settings, database, storage, asset_service
+        )
         revision_service = AnswerRevisionService(
             database,
             asset_service,
             external_url_validator,
             configured_settings.require_preview_before_publish,
-        )
-        preview_service = PreviewService(
-            configured_settings, database, storage, asset_service
+            preview_service,
         )
         resolver_service = QrResolverService(database)
         binding_service = BindingService(
@@ -134,12 +135,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     content={"error": {"code": "ADMIN_AUTH_REQUIRED", "message": "administrator authentication required", "details": {}}},
                 )
         response = await call_next(request)
+        if path.startswith(("/q/", "/r/", "/content/")):
+            is_html = response.headers.get("content-type", "").startswith("text/html")
+            response.headers.update(student.student_headers(csp=is_html))
         if path.startswith("/admin") and response.status_code == 404:
             return html_error(request, 404, "没有找到这个页面。")
         return response
 
     def html_error(request: Request, status: int, message: str) -> HTMLResponse:
-        if request.url.path.startswith(("/q/", "/content/")):
+        if request.url.path.startswith(("/q/", "/r/", "/content/")):
+            headers = student.student_headers(csp=True)
+            if status == 503:
+                headers["Retry-After"] = "30"
             return application.state.templates.TemplateResponse(
                 request,
                 "student/error.html",
@@ -150,7 +157,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "message": message,
                 },
                 status_code=status,
-                headers={"Cache-Control": "no-store, must-revalidate"},
+                headers=headers,
             )
         title = "页面已过期" if status == 403 else "操作未完成"
         if request.url.path.startswith("/r/") and status == 410:
@@ -179,6 +186,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "PUBLISHED_VERSION_MISSING": "这份解析暂未发布，请稍后再试。",
                 "ASSET_MISSING": "解析文件暂时无法打开，请稍后重试。",
                 "STORED_FILE_MISSING": "解析文件暂时无法打开，请稍后重试。",
+                "PREVIEW_NOT_READY": "解析内容正在准备中，请稍后再试。",
+                "PREVIEW_FAILED": "解析内容暂时无法显示，请联系资料提供方。",
+                "PREVIEW_INCOMPLETE": "解析内容暂时不完整，请稍后再试。",
+                "PREVIEW_PAGE_MISSING": "解析页面暂时缺失，请稍后再试。",
+                "PREVIEW_PAGE_INVALID": "解析页面暂时无法显示，请稍后再试。",
+                "PREVIEW_PAGE_HASH_MISMATCH": "解析页面完整性检查失败，请稍后再试。",
+                "PREVIEW_PAGE_NOT_FOUND": "没有找到这一页解析内容。",
+                "PREVIEW_EXTERNAL_DISABLED": "该内容暂不支持受控在线预览。",
+                "PREVIEW_EXTERNAL_UNAVAILABLE": "该内容不属于受控在线预览。",
+                "ORIGINAL_ADMIN_ONLY": "原始文件仅允许管理员登录后访问。",
             }
             message = student_messages.get(exc.code, chinese_error(exc.code, exc.message))
             status_code = 503 if exc.code in {"ASSET_MISSING", "STORED_FILE_MISSING"} else exc.status_code
@@ -192,6 +209,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def validation_error_handler(request: Request, exc: RequestValidationError):
         if request.url.path.startswith("/admin"):
             return html_error(request, 422, "填写内容不完整或格式不正确，请检查后重试。")
+        if request.url.path.startswith(("/q/", "/r/", "/content/")):
+            return html_error(request, 422, "请求内容格式不正确，请检查后重试。")
         details = [
             {"location": list(item["loc"]), "message": item["msg"], "type": item["type"]}
             for item in exc.errors()

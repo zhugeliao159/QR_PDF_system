@@ -1,12 +1,21 @@
 from conftest import create_binding, create_pdf_job
 
 
+def resolved_bytes(client, token):
+    resolved = client.app.state.resolver_service.resolve_latest(token)
+    return client.app.state.asset_service.path(resolved.asset).read_bytes()
+
+
 def test_fixed_entry_stays_on_original_and_cross_binding_is_rejected(client):
     first = create_binding(client, b"original", "answer.txt")
     qr_id = first["qr_id"]
     version_id = first["current_version"]["version_id"]
-    fixed_before = client.get(f"/r/{qr_id}/versions/{version_id}")
-    assert fixed_before.content == b"original"
+    fixed_before = client.get(
+        f"/r/{qr_id}/versions/{version_id}", follow_redirects=False
+    )
+    assert fixed_before.status_code == 307
+    pinned_token = fixed_before.headers["location"].rsplit("/", 1)[-1]
+    assert resolved_bytes(client, pinned_token) == b"original"
     qr = client.get(f"/bindings/{qr_id}/versions/{version_id}/qr.png")
     assert qr.status_code == 200
     client.put(
@@ -19,12 +28,15 @@ def test_fixed_entry_stays_on_original_and_cross_binding_is_rejected(client):
     assert client.get(
         f"/bindings/{qr_id}/versions/{new_version_id}/qr.png"
     ).status_code == 200
-    assert client.get(f"/r/{qr_id}").content == b"new"
-    assert client.get(f"/r/{qr_id}/versions/{version_id}").content == b"original"
+    assert resolved_bytes(client, qr_id) == b"new"
+    assert resolved_bytes(client, pinned_token) == b"original"
     rollback = client.post(f"/bindings/{qr_id}/rollback/{version_id}")
     assert rollback.status_code == 200
-    assert client.get(f"/r/{qr_id}").content == b"original"
-    assert client.get(f"/r/{qr_id}/versions/{new_version_id}").content == b"new"
+    assert resolved_bytes(client, qr_id) == b"original"
+    new_fixed = client.get(
+        f"/r/{qr_id}/versions/{new_version_id}", follow_redirects=False
+    )
+    assert resolved_bytes(client, new_fixed.headers["location"].rsplit("/", 1)[-1]) == b"new"
     versions = client.get(f"/bindings/{qr_id}/versions").json()
     assert next(item for item in versions if item["version_id"] == version_id)["is_pinned"]
 
@@ -46,7 +58,10 @@ def test_pinned_version_survives_cleanup(client, settings):
     versions = client.get(f"/bindings/{qr_id}/versions").json()
     assert any(item["version_id"] == pinned_id and item["is_pinned"] for item in versions)
     assert len([item for item in versions if not item["is_pinned"]]) == 5
-    assert client.get(f"/r/{qr_id}/versions/{pinned_id}").content == b"v1"
+    fixed = client.get(
+        f"/r/{qr_id}/versions/{pinned_id}", follow_redirects=False
+    )
+    assert resolved_bytes(client, fixed.headers["location"].rsplit("/", 1)[-1]) == b"v1"
     assert len([path for path in settings.bindings_dir.rglob("*") if path.is_file()]) == 6
 
 

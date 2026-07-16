@@ -19,8 +19,7 @@ def test_chinese_filename_round_trip(client, filename):
     assert response.status_code == 201, response.text
     binding = response.json()
     assert binding["original_filename"] == filename
-    download = client.get(f"/r/{binding['qr_id']}")
-    disposition = download.headers["content-disposition"]
+    disposition = content_disposition(filename, "inline")
     assert 'filename="' in disposition
     assert f"filename*=UTF-8''{quote(filename, safe='')}" in disposition
 

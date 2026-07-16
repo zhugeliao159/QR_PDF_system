@@ -11,6 +11,11 @@ from app.errors import AppError
 from conftest import create_binding, csrf_from, login_admin
 
 
+def resolved_bytes(client, token):
+    resolved = client.app.state.resolver_service.resolve_latest(token)
+    return client.app.state.asset_service.path(resolved.asset).read_bytes()
+
+
 def create_admin_draft(client, qr_id: str, content: bytes, filename: str = "draft.txt"):
     page = client.get(f"/admin/materials/{qr_id}/replace")
     response = client.post(
@@ -40,7 +45,7 @@ def test_admin_upload_creates_private_draft_without_changing_student_answer(admi
 
     draft_key = create_admin_draft(admin_client, qr_id, b"draft-v2", "v2.txt")
 
-    assert admin_client.get(f"/q/{qr_id}/content", follow_redirects=True).content == b"published-v1"
+    assert resolved_bytes(admin_client, qr_id) == b"published-v1"
     assert admin_client.get(f"/content/{old_revision_key}").content == b"published-v1"
     assert admin_client.get(f"/content/{draft_key}").status_code == 404
     preview = admin_client.get(f"/admin/materials/{qr_id}/drafts/{draft_key}")
@@ -100,9 +105,9 @@ def test_publish_atomically_switches_dynamic_answer_and_preserves_old_content(ad
         follow_redirects=False,
     )
     assert response.status_code == 303, response.text
-    assert admin_client.get(f"/q/{qr_id}/content", follow_redirects=True).content == b"published-v2"
+    assert resolved_bytes(admin_client, qr_id) == b"published-v2"
     assert admin_client.get(f"/content/{old_revision_key}").content == b"published-v1"
-    assert admin_client.get(f"/q/{fixed_token}/content", follow_redirects=True).content == b"published-v1"
+    assert resolved_bytes(admin_client, fixed_token) == b"published-v1"
 
     with admin_client.app.state.database.read() as connection:
         draft = connection.execute(
@@ -139,7 +144,7 @@ def test_missing_asset_blocks_publish_and_keeps_current(admin_client):
     )
     assert response.status_code == 503
     assert "答案文件不存在" in response.text
-    assert admin_client.get(f"/q/{qr_id}/content", follow_redirects=True).content == b"published-v1"
+    assert resolved_bytes(admin_client, qr_id) == b"published-v1"
     with admin_client.app.state.database.read() as connection:
         assert connection.execute(
             "SELECT status FROM answer_revisions WHERE revision_key = ?", (draft_key,)
@@ -168,7 +173,7 @@ def test_stale_concurrent_publish_returns_chinese_conflict(admin_client):
     assert first.status_code == 303
     assert second.status_code == 409
     assert "刚刚被其他管理员更新" in second.text
-    assert admin_client.get(f"/q/{qr_id}/content", follow_redirects=True).content == b"draft-v2"
+    assert resolved_bytes(admin_client, qr_id) == b"draft-v2"
 
 
 def test_two_publish_threads_allow_only_one_winner(admin_client):
@@ -245,8 +250,8 @@ def test_republish_history_reuses_revision_and_keeps_pinned_answer(admin_client)
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert admin_client.get(f"/q/{qr_id}/content", follow_redirects=True).content == b"published-v1"
-    assert admin_client.get(f"/q/{fixed_token}/content", follow_redirects=True).content == b"published-v1"
+    assert resolved_bytes(admin_client, qr_id) == b"published-v1"
+    assert resolved_bytes(admin_client, fixed_token) == b"published-v1"
     with admin_client.app.state.database.read() as connection:
         after = (
             connection.execute("SELECT COUNT(*) FROM answer_revisions").fetchone()[0],
@@ -276,7 +281,7 @@ def test_discard_draft_removes_orphan_asset_and_keeps_current(admin_client):
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert admin_client.get(f"/q/{qr_id}/content", follow_redirects=True).content == b"published-v1"
+    assert resolved_bytes(admin_client, qr_id) == b"published-v1"
     assert not admin_client.app.state.storage.resolve(
         candidate["storage_key"], must_exist=False
     ).exists()
@@ -347,7 +352,7 @@ def test_legacy_put_uses_draft_publish_audit_and_still_requires_auth(admin_setti
             files={"file": ("v2.txt", b"v2", "text/plain")},
         )
         assert response.status_code == 200
-        assert client.get(f"/q/{binding['qr_id']}/content", follow_redirects=True).content == b"v2"
+        assert resolved_bytes(client, binding["qr_id"]) == b"v2"
         with client.app.state.database.read() as connection:
             events = {
                 row["event_type"]

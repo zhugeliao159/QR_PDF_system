@@ -1,52 +1,33 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import RedirectResponse
 
-from app.responses import download_response
-
-
-router = APIRouter(tags=["permanent redirect"])
+from app.routers.student import student_headers
 
 
-def _legacy_answer(
-    request: Request, resolved, cache_control: str
-) -> FileResponse | RedirectResponse:
-    if resolved.revision["target_type"] == "external_url":
-        validated = request.app.state.external_url_validator.validate(
-            resolved.revision["external_url"]
-        )
-        return RedirectResponse(
-            validated.url,
-            status_code=307,
-            headers={"Cache-Control": "no-store, must-revalidate", "Referrer-Policy": "no-referrer"},
-        )
-    path = request.app.state.asset_service.path(resolved.asset)
-    original_filename = resolved.asset["original_filename"]
-    mime_type = resolved.asset["mime_type"]
-    inline = mime_type == "application/pdf" or mime_type.startswith("image/")
-    return download_response(
-        path, original_filename, mime_type,
-        "inline" if inline else "attachment",
-        cache_control,
-    )
+router = APIRouter(tags=["legacy preview redirects"])
 
 
 @router.get("/r/{qr_id}")
-def permanent_file(request: Request, qr_id: str) -> Response:
-    return _legacy_answer(
-        request,
-        request.app.state.resolver_service.resolve_latest(qr_id),
-        "no-cache, no-store, must-revalidate",
+def permanent_file(request: Request, qr_id: str) -> RedirectResponse:
+    request.app.state.resolver_service.resolve_latest(qr_id)
+    return RedirectResponse(
+        f"/q/{qr_id}",
+        status_code=307,
+        headers=student_headers(),
     )
 
 
 @router.get("/r/{qr_id}/versions/{version_id}")
 def fixed_version_file(
-    request: Request, qr_id: str, version_id: int
-) -> Response:
-    return _legacy_answer(
-        request,
-        request.app.state.resolver_service.resolve_revision(qr_id, version_id),
-        "public, max-age=3600, must-revalidate",
+    request: Request,
+    qr_id: str,
+    version_id: int,
+) -> RedirectResponse:
+    token = request.app.state.binding_service.fixed_alias_token(qr_id, version_id)
+    return RedirectResponse(
+        f"/q/{token}",
+        status_code=307,
+        headers=student_headers(),
     )

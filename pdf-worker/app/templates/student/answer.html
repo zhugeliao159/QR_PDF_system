@@ -8,7 +8,7 @@
   <script defer src="/static/js/student.js"></script>
 </head>
 <body>
-  <main class="answer-shell">
+  <main class="answer-shell" id="page-top">
     <header class="answer-heading">
       <p class="answer-code">{{ answer.display_code }}</p>
       <h1>{{ answer.resource_name }}</h1>
@@ -20,45 +20,51 @@
       </p>
       {% endif %}
       <div class="version-line">
-        <span>当前答案第 {{ answer.revision_number }} 版</span>
+        <span>当前解析第 {{ answer.revision_number }} 版</span>
         <time datetime="{{ answer.updated_at }}">更新于 {{ answer.updated_at[:10] }}</time>
       </div>
     </header>
 
-    <section class="content-section" aria-label="解析内容">
-      {% if answer.content_type == 'pdf' %}
-      <object class="pdf-viewer" data-student-content type="application/pdf">
-        <div class="preview-fallback">
-          <h2>当前浏览器无法直接显示 PDF</h2>
-          <p>请点击下方按钮打开解析文件。</p>
-          <a class="primary-action" data-content-link href="#">打开解析文件</a>
-        </div>
-      </object>
-      {% elif answer.content_type == 'image' %}
-      <a class="image-link" data-content-link href="#" target="_blank" rel="noopener">
-        <img class="answer-image" data-student-image alt="{{ answer.resource_name }} 答案图片">
-      </a>
-      {% elif answer.content_type == 'external_url' %}
-      <div class="external-notice">
-        <p class="source-label">此解析内容由外部网站提供</p>
-        <h2>{{ answer.external_host }}</h2>
-        <p>外部网页可能被对方修改、关闭或加入广告。请确认域名后再打开。</p>
-        <a class="primary-action" data-content-link href="#" target="_blank" rel="noopener noreferrer">打开外部解析</a>
-      </div>
+    {% if answer.content_type == 'external_url' %}
+    <section class="external-notice" aria-label="外部内容提示">
+      <p class="source-label">外部网站内容</p>
+      <h2>{{ answer.external_host }}</h2>
+      {% if external_policy == 'disable' %}
+      <p>该内容暂不支持受控在线预览。</p>
       {% else %}
-      <div class="file-fallback">
-        <h2>解析文件已准备好</h2>
-        <p>{{ answer.original_filename }}</p>
-        <a class="primary-action" data-content-link href="#">打开解析文件</a>
-      </div>
+      <p>外部网站不受本系统的预览保护，可能提供下载、复制或跳转功能。</p>
+      <a class="primary-action" href="/q/{{ answer.public_token }}/content" rel="noopener noreferrer">确认并打开外部网站</a>
       {% endif %}
     </section>
-
-    {% if answer.content_type != 'external_url' %}<nav class="answer-actions" aria-label="文件操作">
-      <a class="primary-action" data-content-link href="#" target="_blank" rel="noopener">全屏打开</a>
-      <a class="secondary-action" data-download-link href="#">{% if answer.content_type == 'image' %}下载图片{% else %}下载文件{% endif %}</a>
-    </nav>{% endif %}
-    <p class="network-note">如果内容暂时无法显示，请检查网络后刷新页面，或使用“全屏打开”。</p>
+    {% else %}
+    <section class="viewer-summary" aria-label="预览说明">
+      <strong>内容仅供在线预览</strong>
+      <span>共 {{ answer.page_count }} 页，第一页已优先加载，后续页面将在接近屏幕时加载。</span>
+    </section>
+    <p class="loading-status" data-loading-status aria-live="polite">正在加载第一页……</p>
+    <section class="preview-pages" aria-label="解析内容">
+      {% for page in answer.pages %}
+      <figure class="preview-page" id="page-{{ page.page_number }}">
+        <div class="preview-frame">
+          <img
+            class="preview-image"
+            {% if loop.first %}src="/q/{{ answer.public_token }}/pages/{{ page.page_number }}" loading="eager" fetchpriority="high"{% else %}data-src="/q/{{ answer.public_token }}/pages/{{ page.page_number }}" loading="lazy"{% endif %}
+            width="{{ page.width }}"
+            height="{{ page.height }}"
+            alt="第 {{ page.page_number }} 页解析"
+            draggable="false">
+          <div class="page-error" hidden>
+            <p>第 {{ page.page_number }} 页加载失败。</p>
+            <button type="button" data-retry-page>重新加载本页</button>
+          </div>
+        </div>
+        <figcaption>第 {{ page.page_number }} / {{ answer.page_count }} 页</figcaption>
+      </figure>
+      {% endfor %}
+    </section>
+    <a class="back-to-top" href="#page-top">返回顶部</a>
+    <p class="network-note">页面不提供原始文件下载。预览措施可以提高复制和传播成本，但不能绝对阻止截图或录屏。</p>
+    {% endif %}
   </main>
 </body>
 </html>

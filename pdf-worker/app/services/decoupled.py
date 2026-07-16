@@ -240,11 +240,13 @@ class AnswerRevisionService:
         asset_service: AssetService,
         external_url_validator: ExternalUrlValidator | None = None,
         require_preview_before_publish: bool = False,
+        preview_service: Any | None = None,
     ) -> None:
         self.database = database
         self.asset_service = asset_service
         self.external_url_validator = external_url_validator
         self.require_preview_before_publish = require_preview_before_publish
+        self.preview_service = preview_service
 
     def create_published(
         self,
@@ -498,21 +500,25 @@ class AnswerRevisionService:
                 raise AppError(503, "ASSET_MISSING", "answer asset does not exist")
             self._validate_asset(dict(target))
             if self.require_preview_before_publish:
-                preview = connection.execute(
-                    """
-                    SELECT 1 FROM preview_sets
-                    WHERE revision_id = ? AND source_asset_id = ? AND source_sha256 = ?
-                      AND status = 'completed'
-                    LIMIT 1
-                    """,
-                    (revision_id, target["asset_id"], target["sha256"]),
-                ).fetchone()
-                if preview is None:
+                if self.preview_service is None:
                     raise AppError(
                         409,
                         "PREVIEW_REQUIRED",
                         "必须先成功生成预览，才能发布这个文件版本。",
                     )
+                try:
+                    self.preview_service.completed_preview(
+                        revision_id,
+                        target["asset_id"],
+                        target["sha256"],
+                        verify_files=True,
+                    )
+                except AppError as exc:
+                    raise AppError(
+                        409,
+                        "PREVIEW_REQUIRED",
+                        "学生预览尚未生成完成，暂时不能发布。",
+                    ) from exc
         elif target["target_type"] == "external_url":
             if target["asset_id"] is not None or not target["external_url"]:
                 raise AppError(409, "VERSION_TARGET_INVALID", "external URL target is invalid")

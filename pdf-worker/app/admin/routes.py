@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from app.admin.messages import chinese_error
 from app.auth.password import verify_password
 from app.errors import AppError
+from app.models import utc_now_iso
 from app.network import classify_public_url
 from app.responses import download_response
 from app.services.binding_service import GRADES, SUBJECTS
@@ -392,12 +393,47 @@ def open_published_version(request: Request, qr_id: str, revision_key: str):
         )
         target = validated.url
     else:
-        target = f"/content/{revision_key}"
+        target = f"/admin/revisions/{revision_key}/original"
     return RedirectResponse(
         target,
         status_code=307,
         headers={"Cache-Control": "no-store, must-revalidate", "Referrer-Policy": "no-referrer"},
     )
+
+
+@router.get("/revisions/{revision_key}/original")
+def admin_revision_original(
+    request: Request,
+    revision_key: str,
+    download: bool = Query(False),
+):
+    resolved = request.app.state.resolver_service.resolve_content(revision_key)
+    path = request.app.state.asset_service.path(resolved.asset)
+    with request.app.state.database.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO audit_events
+                (event_type, resource_id, revision_id, actor, summary, created_at)
+            VALUES ('view_original_asset', ?, ?, ?, ?, ?)
+            """,
+            (
+                resolved.resource["id"],
+                resolved.revision["id"],
+                _actor(request),
+                "管理员访问原始文件",
+                utc_now_iso(),
+            ),
+        )
+    response = download_response(
+        path,
+        resolved.asset["original_filename"],
+        resolved.asset["mime_type"],
+        "attachment" if download else "inline",
+        "private, no-store, max-age=0",
+    )
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @router.get(

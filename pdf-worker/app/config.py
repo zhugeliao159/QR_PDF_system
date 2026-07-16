@@ -46,6 +46,14 @@ def _env_hosts(name: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
+def _env_choice(name: str, default: str, allowed: set[str]) -> str:
+    value = os.getenv(name, default).strip().lower() or default
+    if value not in allowed:
+        choices = ", ".join(sorted(allowed))
+        raise ValueError(f"{name} must be one of: {choices}")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     public_base_url: str
@@ -83,6 +91,7 @@ class Settings:
     preview_job_stale_seconds: int = 900
     preview_worker_poll_seconds: float = 2.0
     require_preview_before_publish: bool = False
+    protected_preview_external_url_policy: str = "disable"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -141,7 +150,12 @@ class Settings:
             preview_job_stale_seconds=_env_int("PREVIEW_JOB_STALE_SECONDS", 900),
             preview_worker_poll_seconds=_env_float("PREVIEW_WORKER_POLL_SECONDS", 2.0, 0.1),
             require_preview_before_publish=_env_bool(
-                "REQUIRE_PREVIEW_BEFORE_PUBLISH", False
+                "REQUIRE_PREVIEW_BEFORE_PUBLISH", True
+            ),
+            protected_preview_external_url_policy=_env_choice(
+                "PROTECTED_PREVIEW_EXTERNAL_URL_POLICY",
+                "disable",
+                {"disable", "warn", "allow"},
             ),
         )
         if not settings.admin_password_hash:

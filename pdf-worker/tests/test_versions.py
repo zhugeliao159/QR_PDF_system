@@ -3,6 +3,11 @@ from pathlib import Path
 from conftest import create_binding
 
 
+def current_bytes(client, token):
+    resolved = client.app.state.resolver_service.resolve_latest(token)
+    return client.app.state.asset_service.path(resolved.asset).read_bytes()
+
+
 def test_only_five_versions_are_retained_and_files_are_cleaned(client, settings):
     binding = create_binding(client, b"v1")
     qr_id = binding["qr_id"]
@@ -33,7 +38,7 @@ def test_rollback_and_cross_binding_rejection(client):
     rolled_back = client.post(f"/bindings/{qr_id}/rollback/{old['version_id']}")
     assert rolled_back.status_code == 200
     assert rolled_back.json()["current_version"]["version_number"] == 1
-    assert client.get(f"/r/{qr_id}").content == b"v1"
+    assert current_bytes(client, qr_id) == b"v1"
 
     other = create_binding(client, b"other")
     other_version = client.get(f"/bindings/{other['qr_id']}/versions").json()[0]
@@ -51,6 +56,4 @@ def test_persistence_across_application_recreation(settings):
     with TestClient(create_app(settings)) as first_client:
         binding = create_binding(first_client, b"persistent")
     with TestClient(create_app(settings)) as second_client:
-        response = second_client.get(f"/r/{binding['qr_id']}")
-        assert response.status_code == 200
-        assert response.content == b"persistent"
+        assert current_bytes(second_client, binding["qr_id"]) == b"persistent"

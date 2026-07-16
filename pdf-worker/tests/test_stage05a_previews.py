@@ -252,9 +252,11 @@ def test_backfill_dry_run_is_read_only_and_admin_preview_status(admin_client):
     )
     assert "预览生成完成" in page.text
     assert "preview_key" not in page.text
-    assert admin_client.get(
-        f"/q/{binding['qr_id']}/content", follow_redirects=True
-    ).content == payload
+    student = admin_client.get(f"/q/{binding['qr_id']}")
+    assert student.status_code == 200
+    derivative = admin_client.get(f"/q/{binding['qr_id']}/pages/1")
+    assert derivative.headers["content-type"] == "image/webp"
+    assert derivative.content != payload
 
 
 def test_preview_can_be_required_before_draft_publish(admin_settings):
