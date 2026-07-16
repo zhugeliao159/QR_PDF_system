@@ -16,7 +16,7 @@ Stage 05A–05D：PASS（远程权威环境）。Stage 4 历史回归、Stage 05
 - 生产样本共 Resource 6、Revision 13、Asset 13、completed PreviewSet 8、PreviewPage 186；当前发布覆盖 5/5，固定引用覆盖 1/1，无缺失或失败。
 - 匿名扫描 11 个公开/越权请求，不含原始 PDF、原始图片 SHA、Asset/storage/revision 下载地址或绝对路径；PDF 和图片自动化样本均 PASS。
 - Viewer TTL 30 分钟、idle 10 分钟；Cookie HttpOnly、服务端不存原始 Token；trace_code 不含身份；全局动态水印并发 6，页面限速 120/分钟，manifest 30/分钟。
-- 清理默认 dry-run、逐项复核引用且幂等；演练分批把 1、69、65 个到期/idle Session 标记过期，最终 dry-run 为 0，未删除任何受保护 Asset/Preview。
+- 清理默认 dry-run、逐项复核引用且幂等；演练分批把 1、69、65、71 个到期/idle 测试 Session 标记过期，最终 dry-run 为 0，未删除任何受保护 Asset/Preview。
 - 备份归档 29 MiB，归档 SHA-256 与内部逐文件 SHA 全部通过；临时恢复的数据库数量、动态/固定 alias 和文件哈希一致。
 - Preview Worker 在处理中停止后 stale 重领为 attempts=2，无重复 completed set/页面，不修改原件。
 - 20/50 并发分别 240/600 请求，预期 429 为 106/371，复测 5xx 均为 0；pdf-worker 峰值 103.9% CPU、210.6 MiB，preview-worker 峰值 85.56% CPU、84.51 MiB，RestartCount 均 0。

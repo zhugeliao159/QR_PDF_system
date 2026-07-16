@@ -16,4 +16,4 @@ docker compose exec -T pdf-worker python -m app.scripts.cleanup_storage --apply
 
 绝不清理 current published revision、pinned/fixed alias、PDF job 固定引用、active draft、这些 revision 使用的 completed PreviewSet，以及仍被 revision 引用的 Asset。配置保留期为 Session 7 天、访问事件 30 天、管理审计 180 天；正式机构应在上线前确认隐私和合规要求。
 
-2026-07-16 远程演练均先 dry-run 再 apply：分批把 1、69、65 个到达绝对或 idle 阈值的活跃 Session 标记为过期。没有删除 Asset、PreviewSet 或 PreviewPage，预计/实际释放文件空间 0 字节。最终 dry-run 为 0 项；跳过并保护 current Asset 6、active draft Asset 3、completed PreviewSet 8、pinned/fixed revision 1。
+2026-07-16 远程演练均先 dry-run 再 apply：分批把 1、69、65、71 个到达绝对或 idle 阈值的测试 Session 标记为过期。没有删除 Asset、PreviewSet 或 PreviewPage，预计/实际释放文件空间 0 字节。最终 dry-run 为 0 项；跳过并保护 current Asset 6、active draft Asset 3、completed PreviewSet 8、pinned/fixed revision 1。
