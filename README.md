@@ -1,6 +1,6 @@
 # 练习册二维码管理系统
 
-这是一个面向机构管理员的内部原型：上传答案或讲解资料，生成动态或固定版本二维码，并把二维码添加到练习册 PDF。Stage 5B 已将学生端切换为私有原件派生的逐页 WebP 在线预览。
+这是一个面向机构管理员的内部原型：上传答案或讲解资料，生成动态或固定版本二维码，并把二维码添加到练习册 PDF。Stage 5 已完成私有逐页 WebP、Viewer Session、匿名动态水印、限速、安全清理和可验证备份恢复。
 
 ## 当前状态
 
@@ -8,8 +8,8 @@
 - 健康检查：<http://192.168.100.20:18081/health>
 - QuickDrop：<http://127.0.0.1:18080>
 - 当前分支：`main`
-- 数据库 schema：`4`
-- 自动化测试：`130 passed, 0 failed, 0 skipped`
+- 数据库 schema：`5`
+- 自动化测试：`168 passed, 0 failed, 0 skipped`
 
 仓库默认配置只监听服务器 `127.0.0.1`。经用户确认，当前部署已临时切换为 `192.168.100.20:18081` 局域网测试模式；同一机构 Wi-Fi 内的手机可以扫码测试，但地址依赖当前网络，不得用于正式印刷。
 
@@ -173,7 +173,7 @@ docker compose --profile test build pdf-worker-tests
 docker compose --profile test run --rm pdf-worker-tests
 ```
 
-Stage 5B 最终结果为 `130 passed, 0 failed, 0 skipped`。
+Stage 5 最终结果为 `168 passed, 0 failed, 0 skipped`。
 
 ## 安全边界
 
@@ -220,6 +220,16 @@ Stage 5B 最终结果为 `130 passed, 0 failed, 0 skipped`。
 - [Stage 5B 切换报告](docs/stage_05b_cutover_report.md)
 - [Stage 5B 报告](docs/stage_05b_report.md)
 - [Stage 5B 交接](docs/handoff_stage_05b.md)
+- [Stage 5C Viewer Session 设计](docs/stage_05c_viewer_session_design.md)
+- [Stage 5C 水印设计](docs/stage_05c_watermark_design.md)
+- [Stage 5C 性能报告](docs/stage_05c_performance_report.md)
+- [Stage 5D 路由审计](docs/stage_05d_route_audit.md)
+- [Stage 5D 清理指南](docs/stage_05d_cleanup_guide.md)
+- [Stage 5D 备份恢复指南](docs/stage_05d_backup_restore_guide.md)
+- [Stage 5D 负载报告](docs/stage_05d_load_test_report.md)
+- [Stage 05 安全边界](docs/stage_05_security_boundary.md)
+- [Stage 05 最终报告](docs/stage_05_final_report.md)
+- [Stage 05 交接](docs/handoff_stage_05.md)
 - [第二阶段 API 说明](docs/stage_02_api.md)
 
 ## 当前未实现

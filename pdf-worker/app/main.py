@@ -141,6 +141,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     content={"error": {"code": "ADMIN_AUTH_REQUIRED", "message": "administrator authentication required", "details": {}}},
                 )
         response = await call_next(request)
+        if path.startswith("/static/"):
+            response.headers.update(
+                {
+                    "Referrer-Policy": "no-referrer",
+                    "X-Content-Type-Options": "nosniff",
+                    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+                    "Cross-Origin-Resource-Policy": "same-origin",
+                }
+            )
         if path.startswith(("/q/", "/r/", "/content/")):
             is_html = response.headers.get("content-type", "").startswith("text/html")
             response.headers.update(student.student_headers(csp=is_html))

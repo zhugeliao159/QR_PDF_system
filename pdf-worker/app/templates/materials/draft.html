@@ -11,7 +11,7 @@
   <h2>{{ draft.external_host }}</h2>
   <p>系统不会抓取或嵌入这个网页。请在新窗口中核对内容、域名和学生访问权限。</p>
   <a class="primary button-link" href="{{ draft.external_url }}" target="_blank" rel="noopener noreferrer">在新窗口中测试打开</a>
-  <div class="notice warning">外部网页可能被对方修改、关闭或加入广告。系统只能保存链接，无法保证外部内容长期可用。</div>
+  <div class="notice warning">外部网页不受本系统的预览保护，可能提供下载、复制或跳转功能。系统只能保存链接，无法保证外部内容长期可用。</div>
   {% if draft.external_url.startswith('http://') %}<div class="notice danger">该外部地址仅适用于受控局域网测试，学生离开该网络后可能无法访问。</div>{% endif %}
   <details class="technical"><summary>网址信息</summary><dl><dt>完整网址</dt><dd>{{ draft.external_url }}</dd><dt>连接方式</dt><dd>{% if draft.external_url.startswith('https://') %}HTTPS{% else %}HTTP 局域网测试{% endif %}</dd></dl></details>
 </section>

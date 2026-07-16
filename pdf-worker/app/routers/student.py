@@ -13,8 +13,9 @@ router = APIRouter(tags=["student answers"])
 STUDENT_CACHE = "private, no-store, max-age=0"
 STUDENT_CSP = (
     "default-src 'self'; img-src 'self' blob:; style-src 'self'; "
-    "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; "
-    "object-src 'none'; base-uri 'none'"
+    "script-src 'self'; connect-src 'self'; font-src 'self'; "
+    "object-src 'none'; frame-src 'none'; frame-ancestors 'none'; "
+    "base-uri 'none'; form-action 'self'"
 )
 
 
@@ -25,6 +26,8 @@ def student_headers(*, csp: bool = False) -> dict[str, str]:
         "Referrer-Policy": "no-referrer",
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+        "Cross-Origin-Resource-Policy": "same-origin",
     }
     if csp:
         headers["Content-Security-Policy"] = STUDENT_CSP

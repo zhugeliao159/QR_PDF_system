@@ -19,7 +19,7 @@
   </section>
   {% if allow_external_urls %}<section class="form-section" data-content-panel="external_url" hidden>
     <label>外部网页地址<input type="url" name="external_url" placeholder="https://example.com/answer" autocomplete="off"></label>
-    <div class="notice warning">外部网页可能被对方修改、关闭或加入广告。系统只保存链接，不会抓取或保存网页内容。</div>
+    <div class="notice warning">外部网页不受本系统的预览保护，可能提供下载、复制或跳转功能。系统只保存链接，不会抓取或保存网页内容。</div>
     {% if allow_private_http_external_urls %}<div class="notice danger">私有 HTTP 地址仅适用于受控局域网测试，学生离开该网络后可能无法访问。</div>{% endif %}
   </section>{% endif %}
   <section class="form-section"><label>版本说明（可选）<textarea name="note" maxlength="500" rows="3"></textarea></label></section>

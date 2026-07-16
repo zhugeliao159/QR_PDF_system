@@ -37,10 +37,21 @@ class ViewerSessionService:
         self.database = database
         self._secret = settings.viewer_session_secret.encode("utf-8")
         self._rate_lock = threading.Lock()
+        # SQLite only permits one writer at a time.  Viewer requests perform
+        # small audit/counter writes before rendering, so serialize those
+        # transactions inside the web process instead of letting bursts of
+        # worker threads compete until busy_timeout expires.
+        self._write_lock = threading.RLock()
         self._rate_windows: dict[tuple[int, str], deque[float]] = defaultdict(deque)
         self._page_semaphore = threading.BoundedSemaphore(
             settings.viewer_max_concurrent_page_requests
         )
+
+    @contextmanager
+    def _transaction(self) -> Iterator[Any]:
+        with self._write_lock:
+            with self.database.transaction() as connection:
+                yield connection
 
     def _digest(self, purpose: str, value: str) -> str:
         return hmac.new(
@@ -85,7 +96,7 @@ class ViewerSessionService:
             if self.settings.viewer_store_network_fingerprint and client_host
             else None
         )
-        with self.database.transaction() as connection:
+        with self._transaction() as connection:
             trace = self._new_trace(connection)
             cursor = connection.execute(
                 """
@@ -116,7 +127,7 @@ class ViewerSessionService:
         token_hash = self._digest("token", raw_token)
         now = utc_now()
         error: AppError | None = None
-        with self.database.transaction() as connection:
+        with self._transaction() as connection:
             row = connection.execute(
                 """
                 SELECT s.*, q.public_token
@@ -179,7 +190,7 @@ class ViewerSessionService:
         allowed = self._check_rate(
             session["id"], "manifest", self.settings.viewer_manifest_rate_limit_per_minute
         )
-        with self.database.transaction() as connection:
+        with self._transaction() as connection:
             if not allowed:
                 connection.execute(
                     "UPDATE viewer_sessions SET denied_requests = denied_requests + 1 WHERE id = ?",
@@ -201,7 +212,7 @@ class ViewerSessionService:
         if not acquired or not allowed_rate or not allowed_total:
             if acquired:
                 self._page_semaphore.release()
-            with self.database.transaction() as connection:
+            with self._transaction() as connection:
                 connection.execute(
                     "UPDATE viewer_sessions SET denied_requests = denied_requests + 1 WHERE id = ?",
                     (session["id"],),
@@ -209,7 +220,7 @@ class ViewerSessionService:
                 self._event(connection, session["id"], "rate_limited", "concurrency" if not acquired else "rate_or_quota", page_number)
             raise AppError(429, "VIEWER_RATE_LIMITED", "too many viewer requests")
         try:
-            with self.database.transaction() as connection:
+            with self._transaction() as connection:
                 connection.execute(
                     """
                     UPDATE viewer_sessions
@@ -245,7 +256,7 @@ class ViewerSessionService:
         return [dict(row) for row in rows]
 
     def revoke(self, session_id: int) -> bool:
-        with self.database.transaction() as connection:
+        with self._transaction() as connection:
             row = connection.execute(
                 "SELECT status FROM viewer_sessions WHERE id = ?", (session_id,)
             ).fetchone()
@@ -259,7 +270,7 @@ class ViewerSessionService:
 
     def cleanup_events(self) -> int:
         cutoff = iso(utc_now() - timedelta(days=self.settings.viewer_access_event_retention_days))
-        with self.database.transaction() as connection:
+        with self._transaction() as connection:
             cursor = connection.execute(
                 "DELETE FROM viewer_access_events WHERE created_at < ?", (cutoff,)
             )

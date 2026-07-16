@@ -101,6 +101,8 @@ class Settings:
     viewer_store_network_fingerprint: bool = False
     viewer_store_user_agent_hash: bool = True
     viewer_access_event_retention_days: int = 30
+    viewer_session_retention_days: int = 7
+    audit_event_retention_days: int = 180
     viewer_log_page_events: bool = True
     viewer_page_rate_limit_per_minute: int = 120
     viewer_manifest_rate_limit_per_minute: int = 30
@@ -187,6 +189,8 @@ class Settings:
             viewer_store_network_fingerprint=_env_bool("VIEWER_STORE_NETWORK_FINGERPRINT", False),
             viewer_store_user_agent_hash=_env_bool("VIEWER_STORE_USER_AGENT_HASH", True),
             viewer_access_event_retention_days=_env_int("VIEWER_ACCESS_EVENT_RETENTION_DAYS", 30),
+            viewer_session_retention_days=_env_int("VIEWER_SESSION_RETENTION_DAYS", 7),
+            audit_event_retention_days=_env_int("AUDIT_EVENT_RETENTION_DAYS", 180),
             viewer_log_page_events=_env_bool("VIEWER_LOG_PAGE_EVENTS", True),
             viewer_page_rate_limit_per_minute=_env_int("VIEWER_PAGE_RATE_LIMIT_PER_MINUTE", 120),
             viewer_manifest_rate_limit_per_minute=_env_int("VIEWER_MANIFEST_RATE_LIMIT_PER_MINUTE", 30),
