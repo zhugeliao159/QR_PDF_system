@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import uuid
+import unicodedata
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -99,6 +100,107 @@ class BindingService:
                 "PREVIEW_REQUIRED",
                 "学生预览尚未生成完成，暂时不能发布。",
             )
+
+    @staticmethod
+    def _unique_batch_title(connection: sqlite3.Connection, requested: str) -> str:
+        base = unicodedata.normalize("NFC", requested).strip() or "未命名解析资料"
+        base = base[:100]
+        existing = {
+            unicodedata.normalize("NFC", str(row[0])).casefold()
+            for row in connection.execute("SELECT name FROM answer_resources").fetchall()
+        }
+        if base.casefold() not in existing:
+            return base
+        number = 1
+        while True:
+            suffix = f"({number})"
+            candidate = f"{base[:100 - len(suffix)]}{suffix}"
+            if candidate.casefold() not in existing:
+                return candidate
+            number += 1
+
+    def create_staged_batch_binding(
+        self,
+        stored: StoredObject,
+        title: str,
+        grade: str,
+        subject: str,
+        actor: str,
+        batch_item_id: int,
+    ) -> dict[str, Any]:
+        stored = self._validate_binding_file(stored)
+        now = utc_now_iso()
+        qr_id = uuid.uuid4().hex
+        with self.database.transaction() as connection:
+            resolved_title = self._unique_batch_title(connection, title)
+            metadata = self._clean_metadata(
+                resolved_title, grade, subject, None, None, None
+            )
+            display_code = self.database._unique_display_code(
+                connection, "answer_resources"
+            )
+            resource_id = self.resource_service.create(
+                connection,
+                resource_key=new_public_key(),
+                name=str(metadata["title"]),
+                display_code=display_code,
+                grade=str(metadata["grade"]),
+                subject=str(metadata["subject"]),
+                textbook_version=None,
+                chapter=None,
+                note=None,
+                created_at=now,
+            )
+            draft = self.revision_service.create_draft(
+                connection, resource_id, stored, None, now, actor
+            )
+            alias_cursor = connection.execute(
+                """
+                INSERT INTO qr_aliases
+                    (public_token, display_code, label, resource_id,
+                     resolve_mode, pinned_revision_id, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'latest', NULL, 'active', ?, ?)
+                """,
+                (qr_id, display_code, metadata["title"], resource_id, now, now),
+            )
+            connection.execute(
+                """
+                INSERT INTO audit_events
+                    (event_type, resource_id, revision_id, qr_alias_id,
+                     actor, summary, created_at)
+                VALUES ('batch_create_resource', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    resource_id,
+                    draft["id"],
+                    int(alias_cursor.lastrowid),
+                    actor,
+                    "批量上传创建资料并等待预览发布",
+                    now,
+                ),
+            )
+            result = connection.execute(
+                """
+                UPDATE batch_import_items
+                SET status = 'waiting_preview', resource_id = ?, revision_id = ?,
+                    resolved_title = ?, error_code = NULL, error_message = NULL
+                WHERE id = ? AND status = 'processing'
+                """,
+                (resource_id, draft["id"], metadata["title"], batch_item_id),
+            )
+            if result.rowcount != 1:
+                raise AppError(
+                    409,
+                    "BATCH_ITEM_CLAIM_LOST",
+                    "batch import item is no longer claimed",
+                )
+        return {
+            "qr_id": qr_id,
+            "resource_id": resource_id,
+            "revision_id": draft["id"],
+            "revision_key": draft["revision_key"],
+            "resolved_title": str(metadata["title"]),
+        }
 
     def _validate_binding_file(self, stored: StoredObject) -> StoredObject:
         path = self.storage.resolve(stored.relative_path)

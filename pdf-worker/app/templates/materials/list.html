@@ -1,17 +1,23 @@
 {% extends "base.html" %}
 {% block content %}
-<header class="page-heading"><div><p class="eyebrow">资料管理</p><h1>已有解析资料</h1><p class="muted">共 {{ total }} 条</p></div><a class="primary button-link" href="/admin/materials/new">新建解析二维码</a></header>
+<header class="page-heading"><div><p class="eyebrow">资料管理</p><h1>已有解析资料</h1><p class="muted">共 {{ total }} 条</p></div><div class="row-actions"><a class="button-link" href="/admin/materials/import">批量上传答案</a><a class="primary button-link" href="/admin/materials/new">新建解析二维码</a></div></header>
 <form class="filter-bar" method="get">
-  <label class="grow">搜索<input name="q" value="{{ q }}" placeholder="资料名称、资料编号、文件名、教材或章节"></label>
+  <label class="grow">搜索答案名称<input name="q" value="{{ q }}" placeholder="答案名称，也支持资料编号、文件名、教材或章节"></label>
   <label>年级<select name="grade"><option value="">全部年级</option>{% for value in grades %}<option {% if grade == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
   <label>学科<select name="subject"><option value="">全部学科</option>{% for value in subjects %}<option {% if subject == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
   <label>状态<select name="status"><option value="">全部状态</option><option value="active" {% if status == 'active' %}selected{% endif %}>正常</option><option value="inactive" {% if status == 'inactive' %}selected{% endif %}>已停用</option></select></label>
+  <label>每页<select name="page_size">{% for size in [20, 50, 100] %}<option value="{{ size }}" {% if page_size == size %}selected{% endif %}>{{ size }} 条</option>{% endfor %}</select></label>
   <button type="submit">搜索</button>
 </form>
 {% if materials %}
-<div class="table-wrap"><table><thead><tr><th>资料名称</th><th>资料编号</th><th>年级 / 学科</th><th>当前答案</th><th>更新时间</th><th>状态</th><th>操作</th></tr></thead><tbody>
-{% for item in materials %}<tr><td><strong>{{ item.title }}</strong></td><td>{{ item.display_code }}</td><td>{{ item.grade }} / {{ item.subject }}</td><td class="filename">{% if item.target_type == 'external_url' %}外部网页{% else %}{{ item.original_filename }}{% endif %}</td><td>{{ item.updated_at[:10] }}</td><td><span class="status-tag {% if item.is_active %}success{% else %}muted-tag{% endif %}">{% if item.is_active %}正常{% else %}已停用{% endif %}</span></td><td><div class="row-actions"><a href="/admin/materials/{{ item.qr_id }}">查看</a><a href="/admin/pdf/new?material={{ item.qr_id }}">添加到练习册</a><a href="/admin/materials/{{ item.qr_id }}/replace">新建答案版本</a></div></td></tr>{% endfor %}
-</tbody></table></div>
-<nav class="pagination">{% if page > 1 %}<a href="?q={{ q }}&grade={{ grade }}&subject={{ subject }}&status={{ status }}&page={{ page-1 }}">上一页</a>{% endif %}<span>第 {{ page }} / {{ pages }} 页</span>{% if page < pages %}<a href="?q={{ q }}&grade={{ grade }}&subject={{ subject }}&status={{ status }}&page={{ page+1 }}">下一页</a>{% endif %}</nav>
+<form method="post" action="/admin/materials/delete/confirm" data-bulk-delete-form>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="bulk-actions"><button type="button" data-select-current-page>全选当前页</button><span class="muted" data-selected-count>已选择 0 条</span><button class="danger" type="submit" {% if not deletion_enabled %}disabled{% endif %}>永久删除所选资料</button></div>
+  {% if not deletion_enabled %}<div class="notice danger">永久删除暂不可用：请先在服务器配置独立二级密码。</div>{% endif %}
+  <div class="table-wrap"><table><thead><tr><th class="check-cell"><input type="checkbox" data-select-all aria-label="全选当前页"></th><th>资料名称</th><th>资料编号</th><th>年级 / 学科</th><th>当前答案</th><th>更新时间</th><th>状态</th><th>操作</th></tr></thead><tbody>
+  {% for item in materials %}<tr><td class="check-cell"><input type="checkbox" name="qr_ids" value="{{ item.qr_id }}" data-material-checkbox aria-label="选择 {{ item.title }}"></td><td><strong>{{ item.title }}</strong></td><td>{{ item.display_code }}</td><td>{{ item.grade }} / {{ item.subject }}</td><td class="filename">{% if item.target_type == 'external_url' %}外部网页{% else %}{{ item.original_filename }}{% endif %}</td><td>{{ item.updated_at[:10] }}</td><td><span class="status-tag {% if item.is_active %}success{% else %}muted-tag{% endif %}">{% if item.is_active %}正常{% else %}已停用{% endif %}</span></td><td><div class="row-actions"><a href="/admin/materials/{{ item.qr_id }}">查看</a><a href="/admin/pdf/new?material={{ item.qr_id }}">添加到练习册</a><a href="/admin/materials/{{ item.qr_id }}/replace">新建答案版本</a></div></td></tr>{% endfor %}
+  </tbody></table></div>
+</form>
+<nav class="pagination">{% if page > 1 %}<a href="?q={{ q }}&grade={{ grade }}&subject={{ subject }}&status={{ status }}&page_size={{ page_size }}&page={{ page-1 }}">上一页</a>{% endif %}<span>第 {{ page }} / {{ pages }} 页</span>{% if page < pages %}<a href="?q={{ q }}&grade={{ grade }}&subject={{ subject }}&status={{ status }}&page_size={{ page_size }}&page={{ page+1 }}">下一页</a>{% endif %}</nav>
 {% else %}<div class="empty-state"><h2>没有找到符合条件的解析资料</h2><p>可以调整搜索条件，或新建一份解析资料。</p></div>{% endif %}
 {% endblock %}

@@ -26,6 +26,16 @@ class StorageBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def save_batch_upload(
+        self, upload: UploadFile, batch_key: str, item_key: str, max_size_bytes: int
+    ) -> StoredObject:
+        raise NotImplementedError
+
+    @abstractmethod
+    def commit_batch_upload(self, staging_path: str, qr_id: str) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
     def resolve(self, relative_path: str, must_exist: bool = True) -> Path:
         raise NotImplementedError
 

@@ -69,6 +69,7 @@ class Settings:
     site_name: str = "练习册二维码管理系统"
     admin_username: str = "admin"
     admin_password_hash: str = ""
+    deletion_password_hash: str = ""
     admin_api_token_hash: str = ""
     session_secret: str = "test-session-secret-change-in-production-32-bytes"
     session_cookie_secure: bool = False
@@ -90,6 +91,9 @@ class Settings:
     preview_job_max_attempts: int = 2
     preview_job_stale_seconds: int = 900
     preview_worker_poll_seconds: float = 2.0
+    batch_upload_max_files: int = 100
+    batch_upload_max_total_mb: int = 2048
+    batch_import_stale_seconds: int = 900
     require_preview_before_publish: bool = False
     protected_preview_external_url_policy: str = "disable"
     viewer_session_ttl_minutes: int = 30
@@ -147,6 +151,7 @@ class Settings:
             or "练习册二维码管理系统",
             admin_username=os.getenv("ADMIN_USERNAME", "admin").strip() or "admin",
             admin_password_hash=os.getenv("ADMIN_PASSWORD_HASH", "").strip(),
+            deletion_password_hash=os.getenv("DELETION_PASSWORD_HASH", "").strip(),
             admin_api_token_hash=os.getenv("ADMIN_API_TOKEN_HASH", "").strip(),
             session_secret=os.getenv("SESSION_SECRET", "").strip(),
             session_cookie_secure=_env_bool("SESSION_COOKIE_SECURE", False),
@@ -172,6 +177,9 @@ class Settings:
             preview_job_max_attempts=_env_int("PREVIEW_JOB_MAX_ATTEMPTS", 2),
             preview_job_stale_seconds=_env_int("PREVIEW_JOB_STALE_SECONDS", 900),
             preview_worker_poll_seconds=_env_float("PREVIEW_WORKER_POLL_SECONDS", 2.0, 0.1),
+            batch_upload_max_files=_env_int("BATCH_UPLOAD_MAX_FILES", 100),
+            batch_upload_max_total_mb=_env_int("BATCH_UPLOAD_MAX_TOTAL_MB", 2048),
+            batch_import_stale_seconds=_env_int("BATCH_IMPORT_STALE_SECONDS", 900, 60),
             require_preview_before_publish=_env_bool(
                 "REQUIRE_PREVIEW_BEFORE_PUBLISH", True
             ),
@@ -228,6 +236,10 @@ class Settings:
         return self.max_image_size_mb * 1024 * 1024
 
     @property
+    def batch_upload_max_total_bytes(self) -> int:
+        return self.batch_upload_max_total_mb * 1024 * 1024
+
+    @property
     def bindings_dir(self) -> Path:
         return self.storage_root / "bindings"
 
@@ -244,6 +256,10 @@ class Settings:
         return self.storage_root / "previews"
 
     @property
+    def batch_imports_dir(self) -> Path:
+        return self.storage_root / "batch-imports"
+
+    @property
     def trash_dir(self) -> Path:
         return self.storage_root / ".trash"
 
@@ -255,6 +271,7 @@ class Settings:
             self.source_pdfs_dir,
             self.generated_pdfs_dir,
             self.previews_dir,
+            self.batch_imports_dir,
             self.trash_dir,
             self.input_dir,
             self.output_dir,

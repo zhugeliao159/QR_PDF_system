@@ -41,3 +41,83 @@ if (contentForm) {
   contentForm.querySelectorAll("[data-content-choice]").forEach((choice) => choice.addEventListener("change", refreshContentFields));
   refreshContentFields();
 }
+
+const batchPanel = document.querySelector("[data-batch-status-url]");
+if (batchPanel) {
+  const labels = {
+    pending: "等待处理",
+    processing: "正在校验",
+    waiting_preview: "正在生成预览",
+    completed: "已发布",
+    failed: "失败",
+  };
+  const refreshBatch = async () => {
+    try {
+      const response = await fetch(batchPanel.dataset.batchStatusUrl, {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) throw new Error("status request failed");
+      const data = await response.json();
+      const done = data.counts.completed + data.counts.failed;
+      batchPanel.querySelector("[data-batch-done]").textContent = done;
+      batchPanel.querySelector("[data-batch-success]").textContent = data.counts.completed;
+      batchPanel.querySelector("[data-batch-failed]").textContent = data.counts.failed;
+      data.items.forEach((item) => {
+        const row = batchPanel.querySelector(`[data-item-number="${item.item_number}"]`);
+        if (!row) return;
+        row.querySelector("[data-item-title]").textContent = item.resolved_title || item.original_filename.replace(/\.pdf$/i, "");
+        row.querySelector("[data-item-status]").textContent = labels[item.status] || item.status;
+        const result = row.querySelector("[data-item-result]");
+        result.replaceChildren();
+        if (item.qr_id) {
+          const link = document.createElement("a");
+          link.href = `/admin/materials/${encodeURIComponent(item.qr_id)}`;
+          link.textContent = "查看资料";
+          result.appendChild(link);
+        } else {
+          result.textContent = item.error_message || "—";
+        }
+      });
+      const message = batchPanel.querySelector("[data-batch-message]");
+      if (data.status === "completed") {
+        message.textContent = `批量任务已完成：成功 ${data.counts.completed} 份，失败 ${data.counts.failed} 份。`;
+        return;
+      }
+      message.textContent = "后台正在逐份校验、生成预览并发布……";
+      window.setTimeout(refreshBatch, 2000);
+    } catch (_error) {
+      batchPanel.querySelector("[data-batch-message]").textContent = "暂时无法刷新进度，正在重试……";
+      window.setTimeout(refreshBatch, 5000);
+    }
+  };
+  window.setTimeout(refreshBatch, 500);
+}
+
+const bulkDeleteForm = document.querySelector("[data-bulk-delete-form]");
+if (bulkDeleteForm) {
+  const boxes = Array.from(bulkDeleteForm.querySelectorAll("[data-material-checkbox]"));
+  const all = bulkDeleteForm.querySelector("[data-select-all]");
+  const count = bulkDeleteForm.querySelector("[data-selected-count]");
+  const refreshSelection = () => {
+    const selected = boxes.filter((box) => box.checked).length;
+    count.textContent = `已选择 ${selected} 条`;
+    all.checked = selected > 0 && selected === boxes.length;
+    all.indeterminate = selected > 0 && selected < boxes.length;
+  };
+  const selectAll = (checked) => {
+    boxes.forEach((box) => { box.checked = checked; });
+    refreshSelection();
+  };
+  all.addEventListener("change", () => selectAll(all.checked));
+  bulkDeleteForm.querySelector("[data-select-current-page]").addEventListener("click", () => selectAll(true));
+  boxes.forEach((box) => box.addEventListener("change", refreshSelection));
+  bulkDeleteForm.addEventListener("submit", (event) => {
+    if (!boxes.some((box) => box.checked)) {
+      event.preventDefault();
+      window.alert("请至少选择一条资料。");
+    }
+  });
+  refreshSelection();
+}

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-heading"><div><p class="eyebrow">资料管理</p><h1>批量上传答案</h1><p class="muted">每份 PDF 会建立一份独立资料，并在后台生成预览后自动发布。</p></div></header>
+<form method="post" enctype="multipart/form-data" class="form-layout" data-submit-lock>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="form-section"><h2>统一资料信息</h2><div class="form-grid">
+    <label>年级<select name="grade">{% for value in grades %}<option {% if (form.grade or '未分类') == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+    <label>学科<select name="subject">{% for value in subjects %}<option {% if (form.subject or '未分类') == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+  </div></section>
+  <section class="form-section"><h2>答案 PDF</h2>
+    <label class="file-drop">选择多份 PDF<input type="file" name="files" accept="application/pdf,.pdf" multiple required><span>最多 {{ max_files }} 份，总计不超过 {{ max_total_mb }} MiB，单份不超过 {{ max_file_mb }} MiB。资料名称自动取 PDF 文件名。</span></label>
+  </section>
+  <div class="form-actions"><a href="/admin/materials">取消</a><button class="primary" type="submit" data-loading-text="正在接收文件……">开始批量上传</button></div>
+</form>
+{% endblock %}

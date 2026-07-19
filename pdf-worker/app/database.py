@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DISPLAY_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
 LEGACY_SCHEMA_SQL = """
@@ -372,7 +372,61 @@ CREATE INDEX IF NOT EXISTS idx_viewer_access_events_created
     ON viewer_access_events(created_at);
 """
 
-SCHEMA_SQL = LEGACY_SCHEMA_SQL + DECOUPLED_SCHEMA_SQL + PREVIEW_SCHEMA_SQL + VIEWER_SCHEMA_SQL
+BATCH_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS batch_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_key TEXT NOT NULL UNIQUE,
+    actor TEXT NOT NULL,
+    grade TEXT NOT NULL DEFAULT '未分类',
+    subject TEXT NOT NULL DEFAULT '未分类',
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processing', 'completed')),
+    total_items INTEGER NOT NULL CHECK (total_items >= 1),
+    total_size_bytes INTEGER NOT NULL CHECK (total_size_bytes > 0),
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS batch_import_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_import_id INTEGER NOT NULL,
+    item_number INTEGER NOT NULL CHECK (item_number >= 1),
+    original_filename TEXT NOT NULL,
+    staging_storage_key TEXT,
+    size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
+    sha256 TEXT NOT NULL,
+    requested_title TEXT NOT NULL,
+    resolved_title TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processing', 'waiting_preview', 'completed', 'failed')),
+    resource_id INTEGER,
+    revision_id INTEGER,
+    worker_id TEXT,
+    claimed_at TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    FOREIGN KEY (batch_import_id) REFERENCES batch_imports(id) ON DELETE RESTRICT,
+    FOREIGN KEY (resource_id) REFERENCES answer_resources(id) ON DELETE SET NULL,
+    FOREIGN KEY (revision_id) REFERENCES answer_revisions(id) ON DELETE SET NULL,
+    UNIQUE (batch_import_id, item_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_batch_import_items_status
+    ON batch_import_items(status, id);
+CREATE INDEX IF NOT EXISTS idx_batch_import_items_batch
+    ON batch_import_items(batch_import_id, item_number);
+"""
+
+SCHEMA_SQL = (
+    LEGACY_SCHEMA_SQL
+    + DECOUPLED_SCHEMA_SQL
+    + PREVIEW_SCHEMA_SQL
+    + VIEWER_SCHEMA_SQL
+    + BATCH_SCHEMA_SQL
+)
 
 
 def new_display_code() -> str:
@@ -656,6 +710,13 @@ class Database:
                 connection.execute(statement)
         connection.execute("PRAGMA user_version = 5")
 
+    @staticmethod
+    def _migrate_v5_to_v6(connection: sqlite3.Connection) -> None:
+        for statement in BATCH_SCHEMA_SQL.split(";"):
+            if statement.strip():
+                connection.execute(statement)
+        connection.execute("PRAGMA user_version = 6")
+
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
@@ -719,6 +780,18 @@ class Database:
                     connection.rollback()
                     raise
             version = 5
+
+        if version == 5:
+            self._backup("stage06", version)
+            with self.connect() as connection:
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._migrate_v5_to_v6(connection)
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
+            version = 6
 
         if version < SCHEMA_VERSION:
             raise RuntimeError(

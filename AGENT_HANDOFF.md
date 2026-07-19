@@ -2,6 +2,15 @@
 
 更新时间：2026-07-19（Asia/Shanghai）
 
+## Stage 6 最新状态（优先于下方旧状态）
+
+- Stage 6 已实现并部署：批量 PDF 导入、名称搜索/分页/全选、二级密码永久批量删除，以及回环地址学生服务。
+- 当前为纯 LAN：管理端和现有二维码使用 `http://192.168.100.20:18081`；`student-public` 只监听 `127.0.0.1:18082`。
+- Funnel 已关闭，`tailscale funnel status` 为 `No serve config`。
+- 数据库为 schema 6，最终测试 `176 passed`，匿名原件泄露审计和现有 LAN 二维码实测通过。
+- 二级密码尚未由用户在服务器终端设置，因此永久删除按钮保持禁用；不要索取或输出密码/哈希。
+- 详见 `docs/handoff_stage_06.md` 与 `docs/stage_06_final_report.md`。Stage 6 本地提交不得在未授权时 push。
+
 ## 0. 接手时先看这里
 
 这是“练习册二维码解析系统”的当前总交接。Stage 1 至 Stage 5D 已完成，远程权威仓库已提交并推送 GitHub；下一位 Agent 不需要重新部署或重做 Stage 5。
