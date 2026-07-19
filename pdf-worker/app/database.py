@@ -470,6 +470,7 @@ class Database:
         finally:
             destination.close()
             source.close()
+        backup_path.chmod(0o600)
         self.last_backup_path = backup_path
         return backup_path
 

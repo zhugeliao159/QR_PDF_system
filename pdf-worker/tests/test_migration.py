@@ -62,5 +62,6 @@ def test_v1_migration_preserves_data_and_is_idempotent(tmp_path):
     assert any("stage05a-v3" in path.name for path in backups_before)
     assert any("stage05c-v4" in path.name for path in backups_before)
     assert any("stage06-v5" in path.name for path in backups_before)
+    assert all((path.stat().st_mode & 0o777) == 0o600 for path in backups_before)
     Database(path).initialize()
     assert list((tmp_path / "backups").iterdir()) == backups_before
