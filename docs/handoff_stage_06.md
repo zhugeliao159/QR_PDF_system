@@ -9,7 +9,7 @@
 - Funnel 关闭，状态为 `No serve config`。
 - SQLite schema 6，完整性检查通过；不要删除或重建正式 `data/`。
 - 最终自动化基线为 `176 passed`，匿名原件泄露审计通过。
-- Stage 6 实现已在服务器本地 Git 提交，但按用户要求未 push；以 `git log -1` 和 `git status -sb` 为准。
+- Stage 6 已推送至 `agent/stage6-batch-management`，Draft PR：`https://github.com/zhugeliao159/QR_PDF_system/pull/1`；服务器日常工作区仍保持在 `main`。
 - 二级删除密码尚未由用户设置，永久删除功能会安全地显示为禁用。
 
 ## 主要入口
