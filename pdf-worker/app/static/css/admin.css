@@ -10,6 +10,8 @@ button:hover,.button-link:hover{border-color:var(--green);text-decoration:none}
 .primary:hover{background:var(--green-dark)}
 .secondary{background:#fff}
 .danger-button{border-color:#d7a2a2;color:var(--red)}
+.danger{background:var(--red);border-color:var(--red);color:#fff;font-weight:700}
+.danger:disabled{opacity:.45;cursor:not-allowed}
 .text-button{min-height:auto;padding:2px 4px;border:0;background:none;color:var(--green)}
 .wide{width:100%}
 .topbar{height:68px;padding:0 max(24px,calc((100vw - 1320px)/2));background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:28px}
@@ -59,6 +61,15 @@ th{background:#f8faf8;font-size:13px;color:#52605a}
 .filename{max-width:240px;overflow-wrap:anywhere}
 .row-actions{display:flex;gap:12px;align-items:center;white-space:nowrap}
 .row-actions form{display:inline}
+.bulk-actions{display:flex;gap:12px;align-items:center;margin:12px 0;flex-wrap:wrap}
+.bulk-actions .danger{margin-left:auto}
+.check-cell{width:42px;text-align:center}
+.check-cell input{width:18px;height:18px}
+.danger-zone{border-color:#d7a2a2;background:#fff8f8}
+.danger-tag{background:#fff0f0;color:#8b2424}
+.summary-grid{display:grid;grid-template-columns:repeat(4,minmax(110px,1fr));gap:12px;margin-bottom:18px}
+.summary-grid>div{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid var(--line);background:#fff}
+.summary-grid strong{font-size:1.5rem;color:var(--green-dark)}
 .pagination{display:flex;justify-content:center;gap:22px;padding:22px}
 .empty,.empty-state{color:var(--muted)}
 .empty-state{text-align:center;padding:60px 20px;background:#fff;border:1px solid var(--line)}

@@ -1,15 +1,16 @@
 # 练习册二维码管理系统
 
-这是一个面向机构管理员的内部原型：上传答案或讲解资料，生成动态或固定版本二维码，并把二维码添加到练习册 PDF。Stage 5 已完成私有逐页 WebP、Viewer Session、匿名动态水印、限速、安全清理和可验证备份恢复。
+这是一个面向机构管理员的内部原型：上传答案或讲解资料，生成动态或固定版本二维码，并把二维码添加到练习册 PDF。Stage 6 新增后台批量 PDF 导入、名称自动去重、独立二级密码永久删除，以及只承载学生扫码路由的公网占位服务。
 
 ## 当前状态
 
 - 管理后台：<http://192.168.100.20:18081/admin>
 - 健康检查：<http://192.168.100.20:18081/health>
 - QuickDrop：<http://127.0.0.1:18080>
+- 学生公网占位服务：<http://127.0.0.1:18082>（仅本机监听，当前未启用 Funnel）
 - 当前分支：`main`
-- 数据库 schema：`5`
-- 自动化测试：`168 passed, 0 failed, 0 skipped`
+- 数据库 schema：`6`
+- 自动化测试：`175 passed, 0 failed, 0 skipped`
 
 仓库默认配置只监听服务器 `127.0.0.1`。经用户确认，当前部署已临时切换为 `192.168.100.20:18081` 局域网测试模式；同一机构 Wi-Fi 内的手机可以扫码测试，但地址依赖当前网络，不得用于正式印刷。
 
@@ -31,6 +32,10 @@ ssh -L 18080:127.0.0.1:18080 tx
 2. “给练习册添加二维码”：选择已有资料，上传练习册 PDF，选择二维码方式、页码、大小和位置，预览后下载。
 3. “管理已有解析资料”：搜索资料、新建答案草稿、预览并发布、重新发布历史版本、编辑信息或停用资料。
 
+“批量上传答案”一次最多接收 100 份 PDF、总计 2 GiB。每个 PDF 独立创建资料并在后台生成预览后自动发布；名称取文件名去掉扩展名，重名时自动追加 `(1)`、`(2)`。进度页可关闭，后台 Worker 会继续处理。
+
+资料列表支持按答案名称搜索、20/50/100 条分页和当前页批量选择。永久删除需要独立二级密码；有固定二维码、练习册任务或正在处理的资料会被跳过，其余资料逐条安全删除。
+
 动态二维码只跟随“当前已发布答案”；保存草稿不会影响学生。固定二维码永久指向选定版本。详细步骤见 [管理员操作指南](docs/stage_03_admin_guide.md)。
 
 PDF 和图片在学生页中以逐页 WebP 显示：第一页立即加载，后续页面按需加载。学生端不提供原始文件或下载按钮。外部网页默认不向学生开放，且不能宣称受到同等预览保护。
@@ -48,6 +53,13 @@ docker compose build pdf-worker
 docker compose up -d pdf-worker preview-worker
 docker compose ps
 curl -fsS http://192.168.100.20:18081/health
+```
+
+独立学生服务仅监听回环地址，不包含 `/admin`、`/bindings` 或 `/pdf/jobs`：
+
+```bash
+docker compose up -d student-public
+curl -fsS http://127.0.0.1:18082/health
 ```
 
 只更新 PDF Worker，不重启 QuickDrop：
@@ -85,6 +97,7 @@ docker compose down
 | `SITE_NAME` | `练习册二维码管理系统` | 页面名称 |
 | `ADMIN_USERNAME` | `admin` | 管理员账号 |
 | `ADMIN_PASSWORD_HASH` | 空模板 | scrypt 密码哈希，必须在部署前设置 |
+| `DELETION_PASSWORD_HASH` | 空模板 | 永久删除独立二级密码的 scrypt 哈希；未设置时删除功能禁用 |
 | `SESSION_SECRET` | 空模板 | Session 签名密钥，必须在部署前设置 |
 | `SESSION_COOKIE_SECURE` | `false` | HTTPS 正式部署时改为 `true` |
 | `SESSION_MAX_AGE_SECONDS` | `28800` | 管理员会话有效期 |
@@ -106,6 +119,9 @@ docker compose down
 | `PREVIEW_RENDER_VERSION` | `v1` | 预览算法版本 |
 | `PREVIEW_JOB_MAX_ATTEMPTS` | `2` | 预览任务最大尝试次数 |
 | `PREVIEW_JOB_STALE_SECONDS` | `900` | processing 任务超时恢复时间 |
+| `BATCH_UPLOAD_MAX_FILES` | `100` | 单批 PDF 数量上限 |
+| `BATCH_UPLOAD_MAX_TOTAL_MB` | `2048` | 单批总大小上限 |
+| `BATCH_IMPORT_STALE_SECONDS` | `900` | 批量 Worker 领取超时恢复时间 |
 | `REQUIRE_PREVIEW_BEFORE_PUBLISH` | `true` | 发布文件版本前强制完整预览校验 |
 | `PROTECTED_PREVIEW_EXTERNAL_URL_POLICY` | `disable` | 学生端外部网址策略：disable、warn 或 allow |
 | `VIEWER_SESSION_SECRET` | 空模板 | 预览 Cookie 的 HMAC 密钥，必须至少 32 字节且不得提交真实值 |
@@ -126,6 +142,19 @@ docker compose run --rm --no-deps -v "$PWD:/work" pdf-worker \
 ```
 
 当前服务器已完成初始化，不要重复执行。
+
+## 设置永久删除二级密码
+
+在服务器交互式终端执行；密码与哈希都不会输出：
+
+```bash
+cd ~/projects/qr-exercise-prototype
+docker compose run --rm --no-deps -v "$PWD:/work" pdf-worker \
+  python scripts/set_deletion_password.py /work/.env
+docker compose up -d --force-recreate --no-deps pdf-worker
+```
+
+二级密码至少 16 个字符，必须与管理员登录密码分开保管。每次永久删除都要重新输入；10 分钟内连续错误 5 次会锁定 15 分钟。
 
 ## 修改管理员密码
 
@@ -173,7 +202,7 @@ docker compose --profile test build pdf-worker-tests
 docker compose --profile test run --rm pdf-worker-tests
 ```
 
-Stage 5 最终结果为 `168 passed, 0 failed, 0 skipped`。
+Stage 6 当前结果为 `176 passed, 0 failed, 0 skipped`。
 
 ## 安全边界
 
@@ -185,8 +214,14 @@ Stage 5 最终结果为 `168 passed, 0 failed, 0 skipped`。
 - Preview Worker 不开放端口，同样以非 root 运行，限制为 1 CPU、768 MiB 和 64 PIDs。它把支持的私有 PDF/图片重新编码为内部 WebP 页面；本阶段不承诺阻止截图、录屏或保存已收到的预览图片。
 - 匿名 `/q`、`/r` 与 `/content` 不返回原始 PDF/图片；管理员原件接口要求登录并记录审计。
 - QuickDrop 独立运行，PDF Worker 不读取或修改其数据库。
+- `student-public` 只暴露学生扫码路由、学生静态文件和健康检查，监听 `127.0.0.1:18082`。当前 Funnel 关闭；未来公网测试只允许 Funnel 代理该端口，不再代理完整 PDF Worker。
 
 ## 文档
+
+- [Stage 6 批量管理设计与运维说明](docs/stage_06_batch_management.md)
+- [Stage 6 最终验收报告](docs/stage_06_final_report.md)
+- [Stage 6 交接](docs/handoff_stage_06.md)
+- [云服务器公网部署记录](docs/cloud_deployment_2026-07-20.md)
 
 - [产品说明](docs/stage_03_product_spec.md)
 - [管理员操作指南](docs/stage_03_admin_guide.md)

@@ -9,7 +9,8 @@ RUN addgroup --system --gid 1000 appuser \
     && adduser --system --uid 1000 --ingroup appuser --home /app --shell /usr/sbin/nologin appuser
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+ARG PIP_INDEX_URL=https://pypi.org/simple
+RUN pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" -r requirements.txt
 
 COPY app ./app
 COPY scripts ./scripts

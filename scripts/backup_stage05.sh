@@ -21,7 +21,7 @@ docker compose exec -T pdf-worker \
 cp "data/pdf-worker/db/$DB_TEMP" "$PAYLOAD/db/app.db"
 rm -f "data/pdf-worker/db/$DB_TEMP"
 
-for directory in bindings previews source-pdfs generated-pdfs; do
+for directory in bindings previews batch-imports source-pdfs generated-pdfs; do
   if [ -d "data/pdf-worker/storage/$directory" ]; then
     cp -a "data/pdf-worker/storage/$directory" "$PAYLOAD/storage/$directory"
   fi

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-heading"><div><p class="eyebrow">高风险操作</p><h1>确认永久删除</h1><p class="muted">删除后二维码、版本、预览及原始文件不可恢复。受引用保护的资料会自动跳过。</p></div></header>
+<div class="table-wrap"><table><thead><tr><th>资料名称</th><th>资料编号</th><th>预检结果</th></tr></thead><tbody>
+{% for item in items %}<tr><td><strong>{{ item.title }}</strong></td><td>{{ item.display_code }}</td><td>{% if item.eligible %}<span class="status-tag success">可以删除</span>{% else %}<span class="status-tag danger-tag">将跳过</span> {{ item.reasons | join('；') }}{% endif %}</td></tr>{% endfor %}
+</tbody></table></div>
+<form method="post" action="/admin/materials/delete/apply" class="form-layout" data-submit-lock>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% for item in items %}<input type="hidden" name="qr_ids" value="{{ item.qr_id }}">{% endfor %}
+  <section class="form-section danger-zone"><h2>二次确认</h2><div class="form-grid">
+    <label class="span-2">独立二级密码<input type="password" name="deletion_password" autocomplete="new-password" required></label>
+    <label class="span-2">输入“永久删除”<input name="confirmation" autocomplete="off" required></label>
+  </div></section>
+  <div class="form-actions"><a href="/admin/materials">取消</a><button class="danger" type="submit" data-loading-text="正在永久删除……">确认永久删除可删除项</button></div>
+</form>
+{% endblock %}

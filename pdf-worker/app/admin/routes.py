@@ -6,7 +6,7 @@ from collections import defaultdict
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from app.admin.messages import chinese_error
 from app.auth.password import verify_password
@@ -19,6 +19,8 @@ from app.services.binding_service import GRADES, SUBJECTS
 
 router = APIRouter(prefix="/admin", tags=["管理员后台"])
 LOGIN_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
+DELETION_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
+DELETION_LOCKED_UNTIL: dict[str, float] = {}
 PREVIEW_STATUS_LABELS = {
     "not_generated": "尚未生成预览",
     "pending": "等待生成预览",
@@ -149,20 +151,185 @@ def material_list(
     subject: str = "",
     status: str = "",
     page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
 ):
+    if page_size not in {20, 50, 100}:
+        page_size = 20
     materials, total = request.app.state.binding_service.list_materials(
-        q, grade, subject, status, page, 20
+        q, grade, subject, status, page, page_size
     )
     return _render(
         request, "materials/list.html", materials=materials, total=total,
-        pages=max(1, math.ceil(total / 20)), page=page, q=q, grade=grade,
-        subject=subject, status=status,
+        pages=max(1, math.ceil(total / page_size)), page=page, page_size=page_size,
+        q=q, grade=grade, subject=subject, status=status,
+        deletion_enabled=bool(request.app.state.settings.deletion_password_hash),
     )
 
 
 @router.get("/materials/new", response_class=HTMLResponse)
 def material_create_page(request: Request):
     return _render(request, "materials/create.html", form={})
+
+
+@router.get("/materials/import", response_class=HTMLResponse)
+def material_import_page(request: Request):
+    settings = request.app.state.settings
+    return _render(
+        request,
+        "materials/import.html",
+        form={},
+        max_files=settings.batch_upload_max_files,
+        max_total_mb=settings.batch_upload_max_total_mb,
+        max_file_mb=settings.max_upload_size_mb,
+    )
+
+
+@router.post("/materials/import")
+async def material_import(
+    request: Request,
+    csrf_token: str = Form(...),
+    grade: str = Form("未分类"),
+    subject: str = Form("未分类"),
+    files: list[UploadFile] = File(...),
+):
+    _csrf(request, csrf_token)
+    settings = request.app.state.settings
+    try:
+        batch = await request.app.state.batch_import_service.create_batch(
+            files, grade, subject, _actor(request)
+        )
+    except AppError as exc:
+        return _render(
+            request,
+            "materials/import.html",
+            status_code=exc.status_code,
+            form={"grade": grade, "subject": subject},
+            max_files=settings.batch_upload_max_files,
+            max_total_mb=settings.batch_upload_max_total_mb,
+            max_file_mb=settings.max_upload_size_mb,
+            error=chinese_error(exc.code, exc.message),
+        )
+    return RedirectResponse(
+        f"/admin/materials/imports/{batch['batch_key']}", status_code=303
+    )
+
+
+@router.get("/materials/imports/{batch_key}", response_class=HTMLResponse)
+def material_import_details(request: Request, batch_key: str):
+    batch = request.app.state.batch_import_service.get_batch(batch_key)
+    return _render(request, "materials/import_detail.html", batch=batch)
+
+
+@router.get("/materials/imports/{batch_key}/status")
+def material_import_status(request: Request, batch_key: str):
+    batch = request.app.state.batch_import_service.get_batch(batch_key)
+    return JSONResponse(
+        {
+            "batch_key": batch["batch_key"],
+            "status": batch["status"],
+            "counts": batch["counts"],
+            "items": [
+                {
+                    "item_number": item["item_number"],
+                    "original_filename": item["original_filename"],
+                    "resolved_title": item["resolved_title"],
+                    "status": item["status"],
+                    "error_message": item["error_message"],
+                    "qr_id": item["qr_id"],
+                }
+                for item in batch["items"]
+            ],
+        },
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@router.post("/materials/delete/confirm", response_class=HTMLResponse)
+def material_delete_confirm(
+    request: Request,
+    csrf_token: str = Form(...),
+    qr_ids: list[str] = Form(...),
+):
+    _csrf(request, csrf_token)
+    if not request.app.state.settings.deletion_password_hash:
+        raise AppError(503, "DELETION_PASSWORD_NOT_CONFIGURED", "永久删除二级密码尚未配置。")
+    items = request.app.state.deletion_service.preflight(qr_ids)
+    return _render(request, "materials/delete_confirm.html", items=items)
+
+
+def _deletion_attempt_key(request: Request) -> str:
+    host = request.client.host if request.client else "unknown"
+    return f"{_actor(request)}@{host}"
+
+
+@router.post("/materials/delete/apply", response_class=HTMLResponse)
+def material_delete_apply(
+    request: Request,
+    csrf_token: str = Form(...),
+    qr_ids: list[str] = Form(...),
+    deletion_password: str = Form(...),
+    confirmation: str = Form(...),
+):
+    _csrf(request, csrf_token)
+    items = request.app.state.deletion_service.preflight(qr_ids)
+    settings = request.app.state.settings
+    if not settings.deletion_password_hash:
+        return _render(
+            request,
+            "materials/delete_confirm.html",
+            status_code=503,
+            items=items,
+            error="永久删除二级密码尚未配置。",
+        )
+    key = _deletion_attempt_key(request)
+    now = time.monotonic()
+    locked_until = DELETION_LOCKED_UNTIL.get(key, 0)
+    if locked_until > now:
+        return _render(
+            request,
+            "materials/delete_confirm.html",
+            status_code=429,
+            items=items,
+            error="二级密码错误次数过多，请 15 分钟后重试。",
+        )
+    attempts = [value for value in DELETION_ATTEMPTS[key] if now - value < 600]
+    DELETION_ATTEMPTS[key] = attempts
+    if not verify_password(deletion_password, settings.deletion_password_hash):
+        attempts.append(now)
+        if len(attempts) >= 5:
+            DELETION_LOCKED_UNTIL[key] = now + 900
+            DELETION_ATTEMPTS.pop(key, None)
+        with request.app.state.database.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO audit_events (event_type, actor, summary, created_at)
+                VALUES ('permanent_delete_auth_failed', ?, ?, ?)
+                """,
+                (
+                    _actor(request),
+                    "永久删除二级密码验证失败",
+                    utc_now_iso(),
+                ),
+            )
+        return _render(
+            request,
+            "materials/delete_confirm.html",
+            status_code=401,
+            items=items,
+            error="二级密码不正确，未删除任何资料。",
+        )
+    if confirmation.strip() != "永久删除":
+        return _render(
+            request,
+            "materials/delete_confirm.html",
+            status_code=422,
+            items=items,
+            error="请输入“永久删除”完成确认。",
+        )
+    DELETION_ATTEMPTS.pop(key, None)
+    DELETION_LOCKED_UNTIL.pop(key, None)
+    results = request.app.state.deletion_service.delete_many(qr_ids, _actor(request))
+    return _render(request, "materials/delete_result.html", results=results)
 
 
 @router.post("/materials/new")

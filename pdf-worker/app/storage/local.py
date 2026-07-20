@@ -129,6 +129,24 @@ class LocalStorageBackend(StorageBackend):
         final_path = self.settings.source_pdfs_dir / f"{job_id}.pdf"
         return await self._save_upload(upload, final_path, max_size_bytes)
 
+    async def save_batch_upload(
+        self, upload: UploadFile, batch_key: str, item_key: str, max_size_bytes: int
+    ) -> StoredObject:
+        final_path = self.settings.batch_imports_dir / batch_key / f"{item_key}.pdf"
+        return await self._save_upload(upload, final_path, max_size_bytes)
+
+    def commit_batch_upload(self, staging_path: str, qr_id: str) -> str:
+        source = self.resolve(staging_path)
+        expected_root = self.settings.batch_imports_dir.resolve()
+        if not source.is_relative_to(expected_root):
+            raise AppError(500, "BATCH_STAGING_PATH_INVALID", "batch staging path is invalid")
+        destination = self.settings.bindings_dir / qr_id / f"{uuid.uuid4().hex}.bin"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            raise AppError(409, "STORAGE_COLLISION", "storage name collision")
+        os.replace(source, destination)
+        return self._relative(destination)
+
     def create_output_temp(self, final_relative_path: str) -> Path:
         final_path = self.resolve(final_relative_path, must_exist=False)
         final_path.parent.mkdir(parents=True, exist_ok=True)
