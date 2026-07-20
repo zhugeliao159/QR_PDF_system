@@ -221,6 +221,7 @@ Stage 6 当前结果为 `176 passed, 0 failed, 0 skipped`。
 - [Stage 6 批量管理设计与运维说明](docs/stage_06_batch_management.md)
 - [Stage 6 最终验收报告](docs/stage_06_final_report.md)
 - [Stage 6 交接](docs/handoff_stage_06.md)
+- [云服务器公网部署记录](docs/cloud_deployment_2026-07-20.md)
 
 - [产品说明](docs/stage_03_product_spec.md)
 - [管理员操作指南](docs/stage_03_admin_guide.md)
