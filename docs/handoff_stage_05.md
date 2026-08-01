@@ -1,6 +1,6 @@
 # Stage 05 工作交接
 
-日期：2026-07-16。权威仓库 `/home/user/projects/qr-exercise-prototype`，分支 `main`；服务地址 `http://192.168.100.20:18081`。`pdf-worker` 与 `preview-worker` 运行，QuickDrop 保持停止且其数据库从未被本阶段读取或修改。
+日期：2026-07-16。权威仓库 `/home/user/projects/qr-exercise-prototype`，分支 `main`；服务地址 `http://192.168.1.20:18081`。`pdf-worker` 与 `preview-worker` 运行，QuickDrop 保持停止且其数据库从未被本阶段读取或修改。
 
 Stage 05A/05B/05C 提交为 `590c79b`、`195a208`、`bbac1e2`；Stage 05D 提交见当前 `git log -1`。schema 5，无 Stage 05D migration。最终自动化基线 168 passed，完整结论见 `stage_05_final_report.md`。
 
@@ -9,7 +9,7 @@ Stage 05A/05B/05C 提交为 `590c79b`、`195a208`、`bbac1e2`；Stage 05D 提交
 ```bash
 cd /home/user/projects/qr-exercise-prototype
 docker compose ps
-curl -fsS http://192.168.100.20:18081/health
+curl -fsS http://192.168.1.20:18081/health
 docker compose exec -T pdf-worker python -m app.scripts.cleanup_storage --dry-run
 docker compose --profile test run --rm pdf-worker-tests
 ```

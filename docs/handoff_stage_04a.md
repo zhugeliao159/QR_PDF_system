@@ -8,7 +8,7 @@ Stage 4A 已完成并正式迁移到 schema 3。业务代码已切换到解耦 s
 
 - 项目：`/home/user/projects/qr-exercise-prototype`
 - 分支：`main`
-- PDF Worker：<http://192.168.100.20:18081>
+- PDF Worker：<http://192.168.1.20:18081>
 - QuickDrop：<http://127.0.0.1:18080>
 - 当前为用户确认的局域网测试模式；不要修改网络绑定。
 - 不要修改 QuickDrop 数据库，不要删除 `data/` 或旧表。
@@ -45,7 +45,7 @@ Stage 4A 已完成并正式迁移到 schema 3。业务代码已切换到解耦 s
 ```bash
 cd ~/projects/qr-exercise-prototype
 docker compose ps
-curl -fsS http://192.168.100.20:18081/health
+curl -fsS http://192.168.1.20:18081/health
 docker compose exec -T pdf-worker \
   python scripts/validate_stage04a_migration.py /data/db/app.db /data/storage
 ```

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -20,6 +21,9 @@ from app.database import Database
 from app.errors import AppError
 from app.routers import bindings, health, pdf_jobs, redirects, student
 from app.services.binding_service import BindingService
+from app.services.batch_import_service import BatchImportService
+from app.services.credential_service import CredentialService
+from app.services.deletion_service import PermanentDeletionService
 from app.services.decoupled import (
     AnswerResourceService,
     AnswerRevisionService,
@@ -38,11 +42,17 @@ from app.storage.local import LocalStorageBackend
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, public_only: bool = False) -> FastAPI:
     configured_settings = settings or Settings.from_env()
-    docs_url = "/admin/api-docs" if configured_settings.enable_admin_api_docs else None
+    docs_url = (
+        "/admin/api-docs"
+        if configured_settings.enable_admin_api_docs and not public_only
+        else None
+    )
     openapi_url = (
-        "/admin/openapi.json" if configured_settings.enable_admin_api_docs else None
+        "/admin/openapi.json"
+        if configured_settings.enable_admin_api_docs and not public_only
+        else None
     )
 
     @asynccontextmanager
@@ -50,9 +60,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         configured_settings.ensure_directories()
         database = Database(configured_settings.database_path)
         database.initialize()
+        credential_service = CredentialService(configured_settings, database)
         storage = LocalStorageBackend(configured_settings)
         storage.ensure_directories()
-        qr_service = QrService(configured_settings.public_base_url)
+        qr_service = QrService(
+            configured_settings.public_base_url, configured_settings.qr_codes_dir
+        )
+        with database.read() as connection:
+            existing_qr_tokens = [
+                str(row["public_token"])
+                for row in connection.execute(
+                    "SELECT public_token FROM qr_aliases ORDER BY id"
+                ).fetchall()
+            ]
+        for token in existing_qr_tokens:
+            qr_service.png(token)
         asset_service = AssetService(database, storage)
         resource_service = AnswerResourceService(database)
         external_url_validator = ExternalUrlValidator(configured_settings)
@@ -84,7 +106,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pdf_service = PdfService(
             configured_settings, database, storage, binding_service, qr_service
         )
+        batch_import_service = BatchImportService(
+            configured_settings,
+            database,
+            storage,
+            binding_service,
+            preview_service,
+        )
+        deletion_service = PermanentDeletionService(
+            configured_settings, database, storage
+        )
         application.state.database = database
+        application.state.credential_service = credential_service
         application.state.storage = storage
         application.state.qr_service = qr_service
         application.state.asset_service = asset_service
@@ -97,6 +130,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.watermark_service = watermark_service
         application.state.binding_service = binding_service
         application.state.pdf_service = pdf_service
+        application.state.batch_import_service = batch_import_service
+        application.state.deletion_service = deletion_service
         yield
 
     application = FastAPI(
@@ -110,12 +145,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.settings = configured_settings
     application.state.session_manager = SessionManager(configured_settings)
     application.state.templates = Jinja2Templates(directory="app/templates")
-    application.mount("/static", StaticFiles(directory="app/static"), name="static")
+    if public_only:
+        @application.get("/static/css/student.css", include_in_schema=False)
+        def public_student_css():
+            return FileResponse(Path("app/static/css/student.css"), media_type="text/css")
+
+        @application.get("/static/js/student.js", include_in_schema=False)
+        def public_student_js():
+            return FileResponse(
+                Path("app/static/js/student.js"), media_type="text/javascript"
+            )
+    else:
+        application.mount("/static", StaticFiles(directory="app/static"), name="static")
 
     @application.middleware("http")
     async def authentication_middleware(request: Request, call_next):
         path = request.url.path
-        session = application.state.session_manager.load(request)
+        public_forbidden = (
+            path.startswith(("/admin", "/bindings", "/pdf/jobs", "/content/"))
+            or path == "/capabilities"
+        )
+        if public_only and public_forbidden:
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        session = None if public_only else application.state.session_manager.load(request)
+        if (
+            session is not None
+            and session.credential_version
+            != application.state.credential_service.admin_revision()
+        ):
+            session = None
         request.state.admin = session
         if path.startswith("/admin"):
             public_admin = path == "/admin/login"
@@ -127,7 +185,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     )
                 return RedirectResponse("/admin/login", status_code=303)
         management_api = path.startswith("/bindings") or path.startswith("/pdf/jobs") or path == "/capabilities"
-        if management_api and configured_settings.admin_password_hash:
+        admin_password_configured = (
+            not public_only
+            and bool(application.state.credential_service.admin_password_hash())
+        )
+        if management_api and admin_password_configured:
             authorized = session is not None
             header = request.headers.get("authorization", "")
             if not authorized and header.startswith("Bearer ") and configured_settings.admin_api_token_hash:
@@ -263,17 +325,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return html_error(request, exc.status_code, message)
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
-    @application.get("/", include_in_schema=False)
-    def root():
-        return RedirectResponse("/admin", status_code=303)
+    if public_only:
+        @application.get("/health", include_in_schema=False)
+        def public_health():
+            return {"status": "ok", "service": "student-public"}
+    else:
+        @application.get("/", include_in_schema=False)
+        def root():
+            return RedirectResponse("/admin", status_code=303)
 
-    application.include_router(health.router)
-    application.include_router(bindings.router)
+        application.include_router(health.router)
+        application.include_router(bindings.router)
+        application.include_router(pdf_jobs.router)
+        application.include_router(admin_routes.router)
     application.include_router(redirects.router)
     application.include_router(student.router)
-    application.include_router(pdf_jobs.router)
-    application.include_router(admin_routes.router)
     return application
 
 
 app = create_app()
+public_app = create_app(public_only=True)

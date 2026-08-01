@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-heading">
+  <div><p class="eyebrow">上传任务</p><h1>处理进度</h1><p class="muted">文件传输完成后可以关闭此页，服务器会继续处理。</p></div>
+  <div class="row-actions"><a class="primary button-link" href="/admin/materials/imports/{{ batch.batch_key }}/qrs.zip">下载全部二维码</a><a class="button-link" href="/admin/materials">返回列表</a></div>
+</header>
+<section class="form-section" data-batch-status-url="/admin/materials/imports/{{ batch.batch_key }}/status">
+  <div class="summary-grid">
+    <div><strong data-batch-done>{{ batch.counts.completed + batch.counts.failed }}</strong><span>已完成</span></div>
+    <div><strong data-batch-total>{{ batch.total_items }}</strong><span>总文件</span></div>
+    <div><strong data-batch-success>{{ batch.counts.completed }}</strong><span>成功</span></div>
+    <div><strong data-batch-failed>{{ batch.counts.failed }}</strong><span>失败</span></div>
+  </div>
+  <p class="muted" data-batch-message>{% if batch.status == 'completed' %}任务已完成。{% else %}服务器正在校验、生成预览并自动更新二维码内容……{% endif %}</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>#</th><th>名称</th><th>二维码</th><th>状态</th><th>结果</th></tr></thead>
+    <tbody data-batch-items>
+    {% for item in batch.items %}
+      <tr data-item-number="{{ item.item_number }}">
+        <td>{{ item.item_number }}</td>
+        <td data-item-title>{{ item.resolved_title or item.requested_title }}</td>
+        <td>{% if item.qr_id %}<a href="/admin/materials/{{ item.qr_id }}/qr.png">下载二维码</a>{% else %}—{% endif %}</td>
+        <td data-item-status>{{ item.status }}</td>
+        <td data-item-result>{% if item.error_message %}{{ item.error_message }}{% else %}—{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endblock %}

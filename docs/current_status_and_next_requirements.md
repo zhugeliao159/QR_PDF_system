@@ -4,7 +4,7 @@
 
 远端项目：`/home/user/projects/qr-exercise-prototype`
 
-Windows 副本：`D:\codex_project\QRPDF_server\qr-exercise-prototype`
+Windows 副本：`<local-project-path>`
 
 ## 当前结论
 
@@ -61,7 +61,7 @@ Windows 副本：`D:\codex_project\QRPDF_server\qr-exercise-prototype`
 Windows PowerShell 保持以下隧道运行：
 
 ```powershell
-ssh -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 tx
+ssh -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 <ssh-host-alias>
 ```
 
 - QuickDrop：<http://127.0.0.1:18080>

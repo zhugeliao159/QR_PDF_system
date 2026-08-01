@@ -90,7 +90,26 @@ def _session_preview(request: Request, public_token: str):
 
 @router.get("/q/{public_token}", response_class=HTMLResponse)
 def answer_page(request: Request, public_token: str):
-    resolved = request.app.state.resolver_service.resolve_latest(public_token)
+    try:
+        resolved = request.app.state.resolver_service.resolve_latest(public_token)
+    except AppError as exc:
+        if exc.code != "CURRENT_VERSION_MISSING":
+            raise
+        identity = request.app.state.binding_service.get_identity(public_token)
+        response = request.app.state.templates.TemplateResponse(
+            request,
+            "student/processing.html",
+            {
+                "request": request,
+                "site_name": request.app.state.settings.site_name,
+                "name": identity["name"],
+                "display_code": identity["display_code"],
+            },
+            status_code=202,
+        )
+        response.headers.update(student_headers(csp=True))
+        response.headers["Retry-After"] = "5"
+        return response
     bundle = None
     external_policy = request.app.state.settings.protected_preview_external_url_policy
     if resolved.revision["target_type"] == "file":

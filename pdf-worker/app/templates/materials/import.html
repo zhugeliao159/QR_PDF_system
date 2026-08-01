@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-heading">
+  <div>
+    <p class="eyebrow">永久二维码上传</p>
+    <h1>上传 PDF</h1>
+    <p class="muted">PDF 文件名就是资料名称。同名文件自动更新原二维码，新文件名自动创建永久二维码。</p>
+  </div>
+</header>
+
+<form method="post" enctype="multipart/form-data" class="form-layout" data-reserved-upload data-reserve-url="/admin/materials/import/reserve">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="form-section">
+    <h2>选择 PDF</h2>
+    <label class="file-drop">
+      选择一份或多份 PDF
+      <input type="file" name="files" accept="application/pdf,.pdf" multiple required>
+      <span>最多 {{ max_files }} 份，总计不超过 {{ max_total_mb }} MiB，单份不超过 {{ max_file_mb }} MiB。选择后先生成二维码，再逐份上传和处理。</span>
+    </label>
+  </section>
+  <div class="form-actions">
+    <a href="/admin/materials">取消</a>
+    <button class="primary" type="submit">生成二维码并开始上传</button>
+  </div>
+</form>
+
+<section class="form-section" data-live-upload-panel hidden>
+  <div class="section-heading">
+    <div><h2>二维码已经生成</h2><p class="muted" data-upload-message data-batch-message>正在上传文件，请暂时保持本页打开。</p></div>
+    <div class="row-actions"><a class="button-link" href="/admin" target="_blank">在新标签继续操作</a><a class="primary button-link" data-batch-qr-zip href="#">下载全部二维码</a></div>
+  </div>
+  <div class="summary-grid">
+    <div><strong data-batch-done>0</strong><span>已完成</span></div>
+    <div><strong data-batch-total>0</strong><span>总文件</span></div>
+    <div><strong data-batch-success>0</strong><span>成功</span></div>
+    <div><strong data-batch-failed>0</strong><span>失败</span></div>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>#</th><th>名称</th><th>二维码</th><th>上传/处理状态</th><th>进度</th></tr></thead>
+    <tbody data-batch-items></tbody>
+  </table></div>
+</section>
+{% endblock %}

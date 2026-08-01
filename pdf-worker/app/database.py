@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import sqlite3
+import unicodedata
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 8
 DISPLAY_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
 LEGACY_SCHEMA_SQL = """
@@ -97,6 +98,7 @@ CREATE TABLE IF NOT EXISTS answer_resources (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     resource_key TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
+    name_key TEXT,
     display_code TEXT NOT NULL UNIQUE,
     grade TEXT NOT NULL DEFAULT '未分类',
     subject TEXT NOT NULL DEFAULT '未分类',
@@ -153,6 +155,9 @@ CREATE TABLE IF NOT EXISTS answer_revisions (
 
 CREATE INDEX IF NOT EXISTS idx_answer_revisions_resource
     ON answer_revisions(resource_id, revision_number DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_answer_resources_name_key
+    ON answer_resources(name_key) WHERE name_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS qr_aliases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -372,7 +377,73 @@ CREATE INDEX IF NOT EXISTS idx_viewer_access_events_created
     ON viewer_access_events(created_at);
 """
 
-SCHEMA_SQL = LEGACY_SCHEMA_SQL + DECOUPLED_SCHEMA_SQL + PREVIEW_SCHEMA_SQL + VIEWER_SCHEMA_SQL
+BATCH_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS batch_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_key TEXT NOT NULL UNIQUE,
+    actor TEXT NOT NULL,
+    grade TEXT NOT NULL DEFAULT '未分类',
+    subject TEXT NOT NULL DEFAULT '未分类',
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processing', 'completed')),
+    total_items INTEGER NOT NULL CHECK (total_items >= 1),
+    total_size_bytes INTEGER NOT NULL CHECK (total_size_bytes > 0),
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS batch_import_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_import_id INTEGER NOT NULL,
+    item_number INTEGER NOT NULL CHECK (item_number >= 1),
+    original_filename TEXT NOT NULL,
+    staging_storage_key TEXT,
+    size_bytes INTEGER NOT NULL CHECK (size_bytes > 0),
+    sha256 TEXT NOT NULL,
+    requested_title TEXT NOT NULL,
+    resolved_title TEXT,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processing', 'waiting_preview', 'completed', 'failed')),
+    resource_id INTEGER,
+    revision_id INTEGER,
+    worker_id TEXT,
+    claimed_at TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    FOREIGN KEY (batch_import_id) REFERENCES batch_imports(id) ON DELETE RESTRICT,
+    FOREIGN KEY (resource_id) REFERENCES answer_resources(id) ON DELETE SET NULL,
+    FOREIGN KEY (revision_id) REFERENCES answer_revisions(id) ON DELETE SET NULL,
+    UNIQUE (batch_import_id, item_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_batch_import_items_status
+    ON batch_import_items(status, id);
+CREATE INDEX IF NOT EXISTS idx_batch_import_items_batch
+    ON batch_import_items(batch_import_id, item_number);
+"""
+
+SECURITY_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS security_credentials (
+    credential_key TEXT PRIMARY KEY
+        CHECK (credential_key IN ('admin_password', 'deletion_password')),
+    password_hash TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    updated_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+SCHEMA_SQL = (
+    LEGACY_SCHEMA_SQL
+    + DECOUPLED_SCHEMA_SQL
+    + PREVIEW_SCHEMA_SQL
+    + VIEWER_SCHEMA_SQL
+    + BATCH_SCHEMA_SQL
+    + SECURITY_SCHEMA_SQL
+)
 
 
 def new_display_code() -> str:
@@ -416,6 +487,7 @@ class Database:
         finally:
             destination.close()
             source.close()
+        backup_path.chmod(0o600)
         self.last_backup_path = backup_path
         return backup_path
 
@@ -656,6 +728,73 @@ class Database:
                 connection.execute(statement)
         connection.execute("PRAGMA user_version = 5")
 
+    @staticmethod
+    def _migrate_v5_to_v6(connection: sqlite3.Connection) -> None:
+        for statement in BATCH_SCHEMA_SQL.split(";"):
+            if statement.strip():
+                connection.execute(statement)
+        connection.execute("PRAGMA user_version = 6")
+
+    @staticmethod
+    def _migrate_v6_to_v7(connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(answer_resources)").fetchall()
+        }
+        if "name_key" not in columns:
+            connection.execute("ALTER TABLE answer_resources ADD COLUMN name_key TEXT")
+        rows = connection.execute(
+            """
+            SELECT r.id, r.resource_key, r.name, a.original_filename
+            FROM answer_resources r
+            LEFT JOIN answer_revisions v ON v.id = r.current_published_revision_id
+            LEFT JOIN assets a ON a.id = v.asset_id
+            ORDER BY r.id
+            """
+        ).fetchall()
+        used: set[str] = set()
+        for row in rows:
+            source = Path(row["original_filename"]).stem if row["original_filename"] else row["name"]
+            visible = unicodedata.normalize("NFC", str(source)).strip() or str(row["name"])
+            visible = visible[:240]
+            key = visible.casefold()
+            if key in used:
+                key = f"legacy:{row['resource_key']}"
+            used.add(key)
+            connection.execute(
+                "UPDATE answer_resources SET name = ?, name_key = ? WHERE id = ?",
+                (visible, key, row["id"]),
+            )
+        connection.execute(
+            """
+            UPDATE answer_resources
+            SET grade = '未分类', subject = '未分类',
+                textbook_version = NULL, chapter = NULL, note = NULL
+            """
+        )
+        connection.execute(
+            """
+            UPDATE qr_aliases
+            SET label = (
+                SELECT r.name FROM answer_resources r
+                WHERE r.id = qr_aliases.resource_id
+            )
+            WHERE resolve_mode = 'latest'
+            """
+        )
+        connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_answer_resources_name_key "
+            "ON answer_resources(name_key) WHERE name_key IS NOT NULL"
+        )
+        connection.execute("PRAGMA user_version = 7")
+
+    @staticmethod
+    def _migrate_v7_to_v8(connection: sqlite3.Connection) -> None:
+        for statement in SECURITY_SCHEMA_SQL.split(";"):
+            if statement.strip():
+                connection.execute(statement)
+        connection.execute("PRAGMA user_version = 8")
+
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
@@ -719,6 +858,42 @@ class Database:
                     connection.rollback()
                     raise
             version = 5
+
+        if version == 5:
+            self._backup("stage06", version)
+            with self.connect() as connection:
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._migrate_v5_to_v6(connection)
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
+            version = 6
+
+        if version == 6:
+            self._backup("permanent-qr", version)
+            with self.connect() as connection:
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._migrate_v6_to_v7(connection)
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
+            version = 7
+
+        if version == 7:
+            self._backup("web-password-settings", version)
+            with self.connect() as connection:
+                try:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._migrate_v7_to_v8(connection)
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
+            version = 8
 
         if version < SCHEMA_VERSION:
             raise RuntimeError(

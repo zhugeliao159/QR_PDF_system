@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}安全设置 · {{ site_name }}{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div>
+    <p class="eyebrow">后台账号</p>
+    <h1>安全设置</h1>
+    <p class="muted">密码只保存为加密哈希，不会显示或保存明文。</p>
+  </div>
+</div>
+
+<div class="security-grid">
+  <section class="form-section">
+    <h2>修改管理员登录密码</h2>
+    <p class="muted">修改成功后，所有已登录的后台会话都会失效，需要使用新密码重新登录。</p>
+    <form method="post" action="/admin/security/admin-password" class="stack-form" data-submit-lock>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>当前管理员密码
+        <input type="password" name="current_admin_password" autocomplete="current-password" required>
+      </label>
+      <label>新管理员密码
+        <input type="password" name="new_admin_password" autocomplete="new-password" minlength="16" required>
+        <small class="muted">至少 16 个字符，建议混合大小写字母、数字和符号。</small>
+      </label>
+      <label>再次输入新管理员密码
+        <input type="password" name="confirm_admin_password" autocomplete="new-password" minlength="16" required>
+      </label>
+      <div class="form-actions"><button type="submit" class="primary">修改管理员密码</button></div>
+    </form>
+  </section>
+
+  <section class="form-section danger-zone">
+    <h2>修改永久删除二级密码</h2>
+    <p class="muted">
+      {% if deletion_configured %}
+      二级密码已配置。修改时需要同时验证管理员密码和当前二级密码。
+      {% else %}
+      二级密码尚未配置。设置后，永久删除资料时必须再次输入该密码。
+      {% endif %}
+    </p>
+    <form method="post" action="/admin/security/deletion-password" class="stack-form" data-submit-lock>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>当前管理员密码
+        <input type="password" name="current_admin_password" autocomplete="current-password" required>
+      </label>
+      {% if deletion_configured %}
+      <label>当前二级密码
+        <input type="password" name="current_deletion_password" autocomplete="current-password" required>
+      </label>
+      {% endif %}
+      <label>新二级密码
+        <input type="password" name="new_deletion_password" autocomplete="new-password" minlength="16" required>
+        <small class="muted">至少 16 个字符，并且不能与管理员密码相同。</small>
+      </label>
+      <label>再次输入新二级密码
+        <input type="password" name="confirm_deletion_password" autocomplete="new-password" minlength="16" required>
+      </label>
+      <div class="form-actions"><button type="submit" class="danger-button">修改二级密码</button></div>
+    </form>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}
+<header class="page-heading"><div><p class="eyebrow">资料管理</p><h1>批量删除结果</h1></div><a class="button-link" href="/admin/materials">返回资料列表</a></header>
+<div class="table-wrap"><table><thead><tr><th>资料</th><th>结果</th></tr></thead><tbody>
+{% for item in results %}<tr><td>{{ item.title or item.qr_id }}</td><td>{% if item.deleted %}<span class="status-tag success">已永久删除</span> {{ item.display_code }}{% else %}<span class="status-tag danger-tag">未删除</span> {{ item.reason }}{% endif %}</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

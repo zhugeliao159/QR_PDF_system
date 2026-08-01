@@ -49,9 +49,9 @@ the configured page limit, path traversal, and symbolic-link rejection.
 The live helper called the deployed service over `127.0.0.1:18081`; it did not
 call service classes directly. It created:
 
-- `qr_id`: `6e69e5d0204542b39d19493a4f64cdea`
-- stable URL: `http://127.0.0.1:18081/r/6e69e5d0204542b39d19493a4f64cdea`
-- `job_id`: `2a4953db77b5437594cb00b4a564d883`
+- `qr_id`: `example-token-not-a-real-credential`
+- stable URL: `http://127.0.0.1:18081/r/example-token-not-a-real-credential`
+- `job_id`: `example-job-id`
 - source PDF: 1,161 bytes, 2 pages
 - output PDF: 12,376 bytes, 2 pages
 - output SHA-256: `06a01a1409b6b7ef4f86984d33024ae445c889b7b655134c4a181acd8131f51b`

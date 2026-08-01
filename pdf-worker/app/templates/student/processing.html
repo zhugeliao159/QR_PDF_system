@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta http-equiv="refresh" content="5">
+  <title>{{ name }} - {{ site_name }}</title>
+  <link rel="stylesheet" href="/static/css/student.css">
+</head>
+<body>
+  <main class="answer-shell error-shell">
+    <p class="answer-code">{{ display_code }}</p>
+    <h1>{{ name }}</h1>
+    <p>文件正在上传或生成预览，请稍后再试。本页面会自动刷新。</p>
+    <a class="primary-action" href="{{ request.url.path }}">立即刷新</a>
+  </main>
+</body>
+</html>

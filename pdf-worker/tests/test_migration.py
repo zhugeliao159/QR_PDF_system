@@ -1,3 +1,4 @@
+import os
 import sqlite3
 
 from app.database import Database
@@ -44,7 +45,10 @@ def test_v1_migration_preserves_data_and_is_idempotent(tmp_path):
     database.initialize()
     assert database.last_backup_path and database.last_backup_path.is_file()
     with database.read() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert connection.execute(
+            "SELECT COUNT(*) FROM security_credentials"
+        ).fetchone()[0] == 0
         binding = connection.execute("SELECT * FROM bindings").fetchone()
         assert binding["title"] == "旧资料"
         assert binding["display_code"].startswith("QR-")
@@ -56,10 +60,17 @@ def test_v1_migration_preserves_data_and_is_idempotent(tmp_path):
         assert connection.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM qr_aliases").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM pdf_jobs_v2").fetchone()[0] == 1
+        resource = connection.execute("SELECT name, name_key FROM answer_resources").fetchone()
+        assert resource["name_key"] == resource["name"].casefold()
     backups_before = list((tmp_path / "backups").iterdir())
     assert any("stage03-v1" in path.name for path in backups_before)
     assert any("stage04a-v2" in path.name for path in backups_before)
     assert any("stage05a-v3" in path.name for path in backups_before)
     assert any("stage05c-v4" in path.name for path in backups_before)
+    assert any("stage06-v5" in path.name for path in backups_before)
+    assert any("permanent-qr-v6" in path.name for path in backups_before)
+    assert any("web-password-settings-v7" in path.name for path in backups_before)
+    if os.name != "nt":
+        assert all((path.stat().st_mode & 0o777) == 0o600 for path in backups_before)
     Database(path).initialize()
     assert list((tmp_path / "backups").iterdir()) == backups_before

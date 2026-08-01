@@ -58,7 +58,7 @@ HTTP 回放共 9 项，9 项通过：
 
 ## 资源与网络
 
-- PDF Worker：healthy，`192.168.100.20:18081`。
+- PDF Worker：healthy，`192.168.1.20:18081`。
 - QuickDrop：healthy，`127.0.0.1:18080`。
 - PDF Worker：1 CPU、512 MiB、128 PIDs、`appuser`、capabilities 全部丢弃。
 - 端口绑定未扩大，局域网测试配置未改变。

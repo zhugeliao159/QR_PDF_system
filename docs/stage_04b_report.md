@@ -43,7 +43,7 @@
 
 ## 网络与资源
 
-- PDF Worker：healthy，`192.168.100.20:18081`。
+- PDF Worker：healthy，`192.168.1.20:18081`。
 - QuickDrop：healthy，`127.0.0.1:18080`。
 - 网络绑定、1 CPU、512 MiB、128 PIDs 限制未改变。
 

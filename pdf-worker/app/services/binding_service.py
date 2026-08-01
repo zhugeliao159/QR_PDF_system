@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import uuid
+import unicodedata
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -25,6 +26,7 @@ from app.services.decoupled import (
     ResolvedAnswer,
 )
 from app.services.qr_service import QrService
+from app.services.pdf_identity import pdf_identity
 from app.services.external_url import ExternalUrlValidator
 from app.storage.base import StorageBackend
 
@@ -99,6 +101,269 @@ class BindingService:
                 "PREVIEW_REQUIRED",
                 "学生预览尚未生成完成，暂时不能发布。",
             )
+
+    @staticmethod
+    def _unique_batch_title(connection: sqlite3.Connection, requested: str) -> str:
+        base = unicodedata.normalize("NFC", requested).strip() or "未命名解析资料"
+        base = base[:100]
+        existing = {
+            unicodedata.normalize("NFC", str(row[0])).casefold()
+            for row in connection.execute("SELECT name FROM answer_resources").fetchall()
+        }
+        if base.casefold() not in existing:
+            return base
+        number = 1
+        while True:
+            suffix = f"({number})"
+            candidate = f"{base[:100 - len(suffix)]}{suffix}"
+            if candidate.casefold() not in existing:
+                return candidate
+            number += 1
+
+    def reserve_pdf_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        filename: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        safe_filename, requested_name, name_key = pdf_identity(filename)
+        now = utc_now_iso()
+        resource = connection.execute(
+            "SELECT * FROM answer_resources WHERE name_key = ?", (name_key,)
+        ).fetchone()
+        created = resource is None
+        if resource is None:
+            display_code = self.database._unique_display_code(
+                connection, "answer_resources"
+            )
+            resource_id = self.resource_service.create(
+                connection,
+                resource_key=new_public_key(),
+                name=requested_name,
+                name_key=name_key,
+                display_code=display_code,
+                grade="未分类",
+                subject="未分类",
+                textbook_version=None,
+                chapter=None,
+                note=None,
+                created_at=now,
+            )
+            qr_id = uuid.uuid4().hex
+            alias_cursor = connection.execute(
+                """
+                INSERT INTO qr_aliases
+                    (public_token, display_code, label, resource_id,
+                     resolve_mode, pinned_revision_id, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'latest', NULL, 'active', ?, ?)
+                """,
+                (qr_id, display_code, requested_name, resource_id, now, now),
+            )
+            alias_id = int(alias_cursor.lastrowid)
+            event_type = "reserve_permanent_qr"
+            summary = "按 PDF 文件名创建永久二维码"
+            visible_name = requested_name
+        else:
+            resource_id = int(resource["id"])
+            visible_name = str(resource["name"])
+            display_code = str(resource["display_code"])
+            alias = connection.execute(
+                """
+                SELECT * FROM qr_aliases
+                WHERE resource_id = ? AND resolve_mode = 'latest'
+                ORDER BY id LIMIT 1
+                """,
+                (resource_id,),
+            ).fetchone()
+            if alias is None:
+                qr_id = uuid.uuid4().hex
+                alias_cursor = connection.execute(
+                    """
+                    INSERT INTO qr_aliases
+                        (public_token, display_code, label, resource_id,
+                         resolve_mode, pinned_revision_id, status, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 'latest', NULL, 'active', ?, ?)
+                    """,
+                    (qr_id, display_code, visible_name, resource_id, now, now),
+                )
+                alias_id = int(alias_cursor.lastrowid)
+            else:
+                qr_id = str(alias["public_token"])
+                alias_id = int(alias["id"])
+                connection.execute(
+                    "UPDATE qr_aliases SET status = 'active', updated_at = ? WHERE id = ?",
+                    (now, alias_id),
+                )
+            connection.execute(
+                "UPDATE answer_resources SET status = 'active', updated_at = ? WHERE id = ?",
+                (now, resource_id),
+            )
+            event_type = "reserve_replacement"
+            summary = "同名 PDF 复用永久二维码并等待替换"
+        connection.execute(
+            """
+            INSERT INTO audit_events
+                (event_type, resource_id, qr_alias_id, actor, summary, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (event_type, resource_id, alias_id, actor, summary, now),
+        )
+        return {
+            "resource_id": resource_id,
+            "qr_id": qr_id,
+            "display_code": display_code,
+            "name": visible_name,
+            "name_key": name_key,
+            "filename": safe_filename,
+            "created": created,
+        }
+
+    def reserve_pdf(self, filename: str, actor: str) -> dict[str, Any]:
+        with self.database.transaction() as connection:
+            result = self.reserve_pdf_in_connection(connection, filename, actor)
+        self.qr_service.png(result["qr_id"])
+        return result
+
+    def get_identity(self, qr_id: str) -> dict[str, Any]:
+        with self.database.read() as connection:
+            row = connection.execute(
+                """
+                SELECT r.id AS resource_id, r.name, r.name_key, r.display_code,
+                       r.current_published_revision_id, r.status,
+                       q.id AS alias_id, q.public_token AS qr_id, q.status AS alias_status
+                FROM qr_aliases q
+                JOIN answer_resources r ON r.id = q.resource_id
+                WHERE q.public_token = ? AND q.resolve_mode = 'latest'
+                """,
+                (qr_id,),
+            ).fetchone()
+        if row is None:
+            raise AppError(404, "BINDING_NOT_FOUND", "二维码不存在。")
+        return dict(row)
+
+    def create_staged_batch_revision(
+        self,
+        stored: StoredObject,
+        resource_id: int,
+        actor: str,
+        batch_item_id: int,
+    ) -> dict[str, Any]:
+        stored = self._validate_binding_file(stored)
+        identity = self.resource_service.get(resource_id)
+        moved_path = self.storage.commit_batch_upload(
+            stored.relative_path,
+            str(identity["resource_key"]),
+        )
+        stored = replace(stored, relative_path=moved_path, stored_filename=Path(moved_path).name)
+        try:
+            now = utc_now_iso()
+            with self.database.transaction() as connection:
+                draft = self.revision_service.create_draft(
+                    connection, resource_id, stored, None, now, actor
+                )
+                result = connection.execute(
+                    """
+                    UPDATE batch_import_items
+                    SET status = 'waiting_preview', revision_id = ?,
+                        error_code = NULL, error_message = NULL
+                    WHERE id = ? AND status = 'processing' AND resource_id = ?
+                    """,
+                    (draft["id"], batch_item_id, resource_id),
+                )
+                if result.rowcount != 1:
+                    raise AppError(409, "BATCH_ITEM_CLAIM_LOST", "批量项目状态已变化。")
+        except Exception:
+            self.storage.delete(moved_path)
+            raise
+        return {
+            "resource_id": resource_id,
+            "revision_id": draft["id"],
+            "revision_key": draft["revision_key"],
+        }
+
+    def create_staged_batch_binding(
+        self,
+        stored: StoredObject,
+        title: str,
+        grade: str,
+        subject: str,
+        actor: str,
+        batch_item_id: int,
+    ) -> dict[str, Any]:
+        stored = self._validate_binding_file(stored)
+        now = utc_now_iso()
+        qr_id = uuid.uuid4().hex
+        with self.database.transaction() as connection:
+            resolved_title = self._unique_batch_title(connection, title)
+            metadata = self._clean_metadata(
+                resolved_title, grade, subject, None, None, None
+            )
+            display_code = self.database._unique_display_code(
+                connection, "answer_resources"
+            )
+            resource_id = self.resource_service.create(
+                connection,
+                resource_key=new_public_key(),
+                name=str(metadata["title"]),
+                name_key=unicodedata.normalize("NFC", str(metadata["title"])).casefold(),
+                display_code=display_code,
+                grade=str(metadata["grade"]),
+                subject=str(metadata["subject"]),
+                textbook_version=None,
+                chapter=None,
+                note=None,
+                created_at=now,
+            )
+            draft = self.revision_service.create_draft(
+                connection, resource_id, stored, None, now, actor
+            )
+            alias_cursor = connection.execute(
+                """
+                INSERT INTO qr_aliases
+                    (public_token, display_code, label, resource_id,
+                     resolve_mode, pinned_revision_id, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'latest', NULL, 'active', ?, ?)
+                """,
+                (qr_id, display_code, metadata["title"], resource_id, now, now),
+            )
+            connection.execute(
+                """
+                INSERT INTO audit_events
+                    (event_type, resource_id, revision_id, qr_alias_id,
+                     actor, summary, created_at)
+                VALUES ('batch_create_resource', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    resource_id,
+                    draft["id"],
+                    int(alias_cursor.lastrowid),
+                    actor,
+                    "批量上传创建资料并等待预览发布",
+                    now,
+                ),
+            )
+            result = connection.execute(
+                """
+                UPDATE batch_import_items
+                SET status = 'waiting_preview', resource_id = ?, revision_id = ?,
+                    resolved_title = ?, error_code = NULL, error_message = NULL
+                WHERE id = ? AND status = 'processing'
+                """,
+                (resource_id, draft["id"], metadata["title"], batch_item_id),
+            )
+            if result.rowcount != 1:
+                raise AppError(
+                    409,
+                    "BATCH_ITEM_CLAIM_LOST",
+                    "batch import item is no longer claimed",
+                )
+        return {
+            "qr_id": qr_id,
+            "resource_id": resource_id,
+            "revision_id": draft["id"],
+            "revision_key": draft["revision_key"],
+            "resolved_title": str(metadata["title"]),
+        }
 
     def _validate_binding_file(self, stored: StoredObject) -> StoredObject:
         path = self.storage.resolve(stored.relative_path)
@@ -336,6 +601,69 @@ class BindingService:
         chapter: str | None = None,
         actor: str = "legacy-api",
     ) -> dict[str, Any]:
+        del note, title, grade, subject, textbook_version, chapter
+        identity = self.reserve_pdf(upload.filename or "", actor)
+        qr_id = str(identity["qr_id"])
+        stored = await self.storage.save_binding_upload(
+            upload, qr_id, self.settings.max_upload_size_bytes
+        )
+        draft: dict[str, Any] | None = None
+        try:
+            stored = self._validate_binding_file(stored)
+            now = utc_now_iso()
+            with self.database.transaction() as connection:
+                resource = connection.execute(
+                    "SELECT row_version FROM answer_resources WHERE id = ?",
+                    (identity["resource_id"],),
+                ).fetchone()
+                draft = self.revision_service.create_draft(
+                    connection,
+                    int(identity["resource_id"]),
+                    stored,
+                    None,
+                    now,
+                    actor,
+                )
+                expected_row_version = int(resource["row_version"])
+                if not self.revision_service.require_preview_before_publish:
+                    self.revision_service.publish_in_connection(
+                        connection,
+                        int(identity["resource_id"]),
+                        int(draft["id"]),
+                        expected_row_version,
+                        actor,
+                        "legacy_immediate_publish",
+                    )
+            if self.revision_service.require_preview_before_publish:
+                self._prepare_preview_for_publish(int(draft["id"]))
+                with self.database.transaction() as connection:
+                    self.revision_service.publish_in_connection(
+                        connection,
+                        int(identity["resource_id"]),
+                        int(draft["id"]),
+                        expected_row_version,
+                        actor,
+                        "legacy_immediate_publish",
+                    )
+        except Exception:
+            if draft is None:
+                self.storage.delete(stored.relative_path)
+            raise
+        self._cleanup_old_versions(int(identity["resource_id"]))
+        logger.info("permanent QR upload published public_token=%s", qr_id)
+        return self.get_binding(qr_id)
+
+    async def _legacy_create_binding(
+        self,
+        upload: UploadFile,
+        note: str | None = None,
+        title: str | None = None,
+        grade: str = "未分类",
+        subject: str = "未分类",
+        textbook_version: str | None = None,
+        chapter: str | None = None,
+        actor: str = "legacy-api",
+    ) -> dict[str, Any]:
         qr_id = uuid.uuid4().hex
         stored = await self.storage.save_binding_upload(
             upload, qr_id, self.settings.max_upload_size_bytes
@@ -360,6 +688,7 @@ class BindingService:
                     connection,
                     resource_key=new_public_key(),
                     name=str(metadata["title"]),
+                    name_key=pdf_identity(stored.original_filename)[2],
                     display_code=display_code,
                     grade=str(metadata["grade"]),
                     subject=str(metadata["subject"]),
@@ -455,6 +784,15 @@ class BindingService:
         note: str | None = None,
         actor: str = "legacy-api",
     ) -> dict[str, Any]:
+        identity = self.get_identity(qr_id)
+        _, _, uploaded_name_key = pdf_identity(upload.filename)
+        if uploaded_name_key != identity["name_key"]:
+            await upload.close()
+            raise AppError(
+                409,
+                "PDF_NAME_MISMATCH",
+                "替换文件名必须与二维码绑定名称相同。",
+            )
         binding = self._binding_row(qr_id)
         stored = await self.storage.save_binding_upload(
             upload, qr_id, self.settings.max_upload_size_bytes
@@ -651,7 +989,13 @@ class BindingService:
         return self._with_preview(self._version_out(revision, binding["version_id"]))
 
     def discard_draft(self, qr_id: str, revision_key: str, actor: str) -> None:
-        binding = self._binding_row(qr_id, allow_inactive=True)
+        try:
+            binding = self._binding_row(qr_id, allow_inactive=True)
+        except AppError as exc:
+            if exc.code != "CURRENT_VERSION_MISSING":
+                raise
+            identity = self.get_identity(qr_id)
+            binding = {"id": identity["resource_id"]}
         candidate = self.revision_service.get_by_key(binding["id"], revision_key)
         trash_path: str | None = None
         delete_asset = False
@@ -920,6 +1264,26 @@ class BindingService:
             f"{resolved.resource['name']} 第 {resolved.revision['revision_number']} 版",
             source_job_id,
         )
+        return str(alias["public_token"])
+
+    def existing_fixed_alias_token(self, qr_id: str, version_id: int) -> str:
+        identity = self.get_identity(qr_id)
+        with self.database.read() as connection:
+            alias = connection.execute(
+                """
+                SELECT public_token FROM qr_aliases
+                WHERE resource_id = ? AND resolve_mode = 'pinned'
+                  AND pinned_revision_id = ?
+                ORDER BY id LIMIT 1
+                """,
+                (identity["resource_id"], version_id),
+            ).fetchone()
+        if alias is None:
+            raise AppError(
+                410,
+                "FIXED_QR_DISABLED",
+                "系统不再创建版本二维码，请使用文件名绑定的永久二维码。",
+            )
         return str(alias["public_token"])
 
     def current_version_id(self, qr_id: str) -> int:

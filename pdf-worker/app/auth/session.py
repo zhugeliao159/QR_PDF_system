@@ -17,6 +17,7 @@ class AdminSession:
     username: str
     csrf_token: str
     session_id: str
+    credential_version: int
 
 
 class SessionManager:
@@ -26,10 +27,22 @@ class SessionManager:
             settings.session_secret, salt="qr-admin-session-v1"
         )
 
-    def create(self, username: str) -> tuple[str, AdminSession]:
-        session = AdminSession(username, secrets.token_urlsafe(32), secrets.token_hex(16))
+    def create(
+        self, username: str, credential_version: int = 0
+    ) -> tuple[str, AdminSession]:
+        session = AdminSession(
+            username,
+            secrets.token_urlsafe(32),
+            secrets.token_hex(16),
+            credential_version,
+        )
         token = self.serializer.dumps(
-            {"u": session.username, "c": session.csrf_token, "s": session.session_id}
+            {
+                "u": session.username,
+                "c": session.csrf_token,
+                "s": session.session_id,
+                "v": session.credential_version,
+            }
         )
         return token, session
 
@@ -41,7 +54,9 @@ class SessionManager:
             payload = self.serializer.loads(
                 token, max_age=self.settings.session_max_age_seconds
             )
-            return AdminSession(payload["u"], payload["c"], payload["s"])
+            return AdminSession(
+                payload["u"], payload["c"], payload["s"], int(payload.get("v", 0))
+            )
         except (BadSignature, SignatureExpired, KeyError, TypeError):
             return None
 

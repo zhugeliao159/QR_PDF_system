@@ -22,6 +22,7 @@ async def create_pdf_job(
     qr_mode: str = Form("dynamic"),
 ) -> dict:
     settings = request.app.state.settings
+    qr_mode = "dynamic"
     return await request.app.state.pdf_service.create_job(
         file,
         qr_id,

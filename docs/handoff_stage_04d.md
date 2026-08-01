@@ -32,7 +32,7 @@ ALLOW_EXTERNAL_URLS=false
 ```bash
 cd /home/user/projects/qr-exercise-prototype
 docker compose ps
-curl -fsS http://192.168.100.20:18081/health
+curl -fsS http://192.168.1.20:18081/health
 docker compose --profile test run --rm pdf-worker-tests
 ```
 

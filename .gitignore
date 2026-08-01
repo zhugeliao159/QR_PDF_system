@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 *.log
+.initial-admin-password
+initial-admin-password*.txt
+*.tar.gz

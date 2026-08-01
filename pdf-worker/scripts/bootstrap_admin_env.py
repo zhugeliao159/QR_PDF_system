@@ -68,6 +68,8 @@ def main() -> int:
         "ADMIN_PASSWORD_HASH": hash_password(password),
         "ADMIN_API_TOKEN_HASH": values.get("ADMIN_API_TOKEN_HASH") or "",
         "SESSION_SECRET": secrets.token_urlsafe(48),
+        "VIEWER_SESSION_SECRET": values.get("VIEWER_SESSION_SECRET")
+        or secrets.token_urlsafe(48),
         "SESSION_COOKIE_SECURE": values.get("SESSION_COOKIE_SECURE") or "false",
         "SESSION_MAX_AGE_SECONDS": values.get("SESSION_MAX_AGE_SECONDS") or "28800",
         "ENABLE_ADMIN_API_DOCS": values.get("ENABLE_ADMIN_API_DOCS") or "false",

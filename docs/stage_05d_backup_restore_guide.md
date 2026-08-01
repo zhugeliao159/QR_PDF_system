@@ -7,7 +7,7 @@ cd /home/user/projects/qr-exercise-prototype
 scripts/backup_stage05.sh /home/user/projects/qr-stage05-$(date +%F).tar.gz
 ```
 
-脚本通过 SQLite Backup API 取得一致数据库快照，并包含私有 Asset、基础 Preview、source/generated PDF、`.env`、`compose.yaml` 和必要配置。归档含文件清单、逐文件 SHA-256 与数据库计数，权限设为 0600。真实 `.env` 含密钥，必须加密后异机保存并限制访问；不能只把备份留在同一磁盘。
+脚本通过 SQLite Backup API 取得一致数据库快照，并包含私有 Asset、基础 Preview、批量导入 Asset/暂存文件、source/generated PDF、`.env`、`compose.yaml` 和必要配置。归档含文件清单、逐文件 SHA-256 与数据库计数，权限设为 0600。真实 `.env` 含密钥，必须加密后异机保存并限制访问；不能只把备份留在同一磁盘。
 
 只验证和演练到临时目录：
 

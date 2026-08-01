@@ -8,7 +8,7 @@ Stage 4C 已完成并部署。管理员上传新答案后先得到草稿，学�
 
 ## 日常操作
 
-1. 打开 <http://192.168.100.20:18081/admin> 并登录。
+1. 打开 <http://192.168.1.20:18081/admin> 并登录。
 2. 在“管理已有解析资料”中进入资料详情。
 3. 点击“新建答案版本”，上传文件并保存草稿。
 4. 在草稿页预览或下载核对。
@@ -20,7 +20,7 @@ Stage 4C 已完成并部署。管理员上传新答案后先得到草稿，学�
 ```bash
 cd /home/user/projects/qr-exercise-prototype
 docker compose ps
-curl -fsS http://192.168.100.20:18081/health
+curl -fsS http://192.168.1.20:18081/health
 docker compose --profile test run --rm pdf-worker-tests
 ```
 

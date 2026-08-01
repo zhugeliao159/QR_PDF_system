@@ -84,6 +84,7 @@ class AnswerResourceService:
         *,
         resource_key: str,
         name: str,
+        name_key: str | None,
         display_code: str,
         grade: str,
         subject: str,
@@ -95,14 +96,14 @@ class AnswerResourceService:
         cursor = connection.execute(
             """
             INSERT INTO answer_resources
-                (resource_key, name, display_code, grade, subject,
+                (resource_key, name, name_key, display_code, grade, subject,
                  textbook_version, chapter, note,
                  current_published_revision_id, status, row_version,
                  created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', 1, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'active', 1, ?, ?)
             """,
             (
-                resource_key, name, display_code, grade, subject,
+                resource_key, name, name_key, display_code, grade, subject,
                 textbook_version, chapter, note, created_at, created_at,
             ),
         )
@@ -746,7 +747,7 @@ class QrResolverService:
         resource = {
             key: row[key]
             for key in (
-                "id", "resource_key", "name", "display_code", "grade", "subject",
+                "id", "resource_key", "name", "name_key", "display_code", "grade", "subject",
                 "textbook_version", "chapter", "note",
                 "current_published_revision_id", "status", "row_version",
                 "created_at", "updated_at", "legacy_binding_id",

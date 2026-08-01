@@ -4,23 +4,23 @@
 
 远端项目：`/home/user/projects/qr-exercise-prototype`
 
-Windows 工作副本：`D:\codex_project\QRPDF_server\qr-exercise-prototype`
+Windows 工作副本：`<local-project-path>`
 
 ## 当前结论
 
 第三阶段已经实现并部署。当前可以完全通过中文后台完成：新建解析资料、下载动态或固定二维码、给练习册 PDF 加二维码、查看目标页预览、下载结果、搜索资料、替换文件和恢复历史版本。
 
-QuickDrop 与 PDF Worker 均为 `healthy`。经用户确认，PDF Worker 已临时开放到具体局域网地址 `192.168.100.20:18081` 供手机扫码测试；QuickDrop 仍只监听 `127.0.0.1`，未开放公网，也未执行 Git push。
+QuickDrop 与 PDF Worker 均为 `healthy`。经用户确认，PDF Worker 已临时开放到具体局域网地址 `192.168.1.20:18081` 供手机扫码测试；QuickDrop 仍只监听 `127.0.0.1`，未开放公网，也未执行 Git push。
 
 ## 立即使用
 
 PDF Worker 直接通过局域网访问。仅使用 QuickDrop 时需要在 Windows PowerShell 中保持以下命令运行：
 
 ```powershell
-ssh -L 18080:127.0.0.1:18080 tx
+ssh -L 18080:127.0.0.1:18080 <ssh-host-alias>
 ```
 
-浏览器打开 <http://192.168.100.20:18081/admin>。管理员用户名为 `admin`，一次性初始密码不写入本文档。
+浏览器打开 <http://192.168.1.20:18081/admin>。管理员用户名为 `admin`，一次性初始密码不写入本文档。
 
 详细操作见 `docs/stage_03_admin_guide.md`。
 
@@ -30,14 +30,14 @@ ssh -L 18080:127.0.0.1:18080 tx
 
 固定二维码：`/r/{qr_id}/versions/{version_id}`，永远打开指定版本。固定引用会保护版本，自动历史清理不会删除它。
 
-正式定稿内容建议使用固定二维码；持续维护内容可使用动态二维码。当前二维码基础地址是 `192.168.100.20`，两种二维码都只能在当前机构局域网测试，不能正式印刷。
+正式定稿内容建议使用固定二维码；持续维护内容可使用动态二维码。当前二维码基础地址是 `192.168.1.20`，两种二维码都只能在当前机构局域网测试，不能正式印刷。
 
 ## 原数据状态
 
 - 数据库 schema 已从 1 幂等迁移到 2。
 - 原有 2 条资料、3 个文件版本和 3 个 PDF job 均保留。
-- 原绑定 `df826233e31c4b98891d50aa7d6d4cc0` 继续可访问。
-- 原 PDF SHA-256：`bd4b3408f4986d4a41f5071c2d645328edf70882181438697be849331eb6f0fc`，迁移后重新下载核对一致。
+- 原绑定 `example-token-2-not-a-real-credential` 继续可访问。
+- 原 PDF SHA-256：`<sha256-redacted>`，迁移后重新下载核对一致。
 - 历史中文文件名现在显示为 `学术英语理工Unit 1 202409.pdf`。
 - 迁移前备份在 `data/pdf-worker/db/backups/`，共两份，单份约 52 KiB。
 - QuickDrop 数据目录约 1.2 MiB，未被 PDF Worker 读取或修改。
@@ -49,7 +49,7 @@ ssh -L 18080:127.0.0.1:18080 tx
 - Swagger 和 OpenAPI 默认关闭。
 - Session Cookie 为签名、`HttpOnly`、`SameSite=Lax`，默认有效 8 小时。
 - 密码使用 scrypt 哈希；`.env` 与一次性凭据不进入 Git。
-- QuickDrop 为 `127.0.0.1:18080`；PDF Worker 为用户授权的 `192.168.100.20:18081`，没有绑定所有网卡。
+- QuickDrop 为 `127.0.0.1:18080`；PDF Worker 为用户授权的 `192.168.1.20:18081`，没有绑定所有网卡。
 - PDF Worker 保持非 root、`cap_drop: ALL`、`no-new-privileges`、1 CPU、512 MiB、128 PIDs 和日志轮转。
 
 首次登录后应尽快按 README 的“修改管理员密码”步骤更换密码。
@@ -72,7 +72,7 @@ ssh -L 18080:127.0.0.1:18080 tx
 cd ~/projects/qr-exercise-prototype
 docker compose ps
 docker compose logs --tail=200 pdf-worker
-curl -fsS http://192.168.100.20:18081/health
+curl -fsS http://192.168.1.20:18081/health
 docker compose --profile test run --rm pdf-worker-tests
 ```
 

@@ -63,7 +63,7 @@ def rollback_binding(request: Request, qr_id: str, version_id: int) -> dict:
 def get_fixed_qr_png(
     request: Request, qr_id: str, version_id: int
 ) -> Response:
-    public_token = request.app.state.binding_service.fixed_alias_token(
+    public_token = request.app.state.binding_service.existing_fixed_alias_token(
         qr_id, version_id
     )
     qr_url = request.app.state.qr_service.fixed_url(public_token)
